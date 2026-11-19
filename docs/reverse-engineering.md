@@ -1,25 +1,29 @@
-# Rétro-ingénierie de Dreame Vacuum Card
+# Dreame Vacuum Card reverse engineering
 
-## Ce que le navigateur a chargé
+## Target and evidence
 
-L’accueil français est généré par VitePress. Le scénario REA a ouvert la page, refusé les cookies puis suivi le lien d’activation jusqu’à `/fr/get-dvc`. La capture a enregistré 135 transactions, dont une seule requête de type document. L’activation de la carte est décrite dans la documentation comme une opération de l’intégration Home Assistant. [Accueil](https://dvc.tasshack.com/fr/) · [Activation](https://dvc.tasshack.com/fr/get-dvc)
+The target is Tasshack’s Dreame Vacuum Card for Home Assistant. Its public site describes the product and its workflows. The installation guide places the card inside the Dreame Vacuum integration, where Lovelace exposes it as **Dreame Vacuum Card**. The live REA browser capture followed the French landing page to the activation guide. It recorded one document request and 135 total transactions during that navigation. [Product site](https://dvc.tasshack.com/) · [Installation](https://dvc.tasshack.com/getting-started/installation-and-usage)
 
-REA a analysé un fichier JavaScript minifié issu d’une capture locale de l’interface Dreame. L’analyse a parcouru 152 314 nœuds syntaxiques et relevé 289 observations statiques. Une seconde lecture syntaxique a confirmé deux sites d’appel explicites à `customElements.define`. Le graphe sémantique reste partiel et le module commercial n’a pas été exécuté pendant cette analyse.
+The Home Assistant attachment is stronger evidence of what ships. The local `frontend.js` matched the gzip-decoded `FRONTEND` constant in the public Dreame Vacuum v2.0.3 source byte for byte. The integration’s `frontend.py` serves that resource as a versioned JavaScript module. It registers the resource in Lovelace storage mode and has a WebSocket-based module-loading path for YAML mode. A separate authenticated handler serves the activated component. The vendor documentation describes that component as license-gated. [Embedded frontend](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/const.py) · [Lovelace registration](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/frontend.py) · [Activation](https://dvc.tasshack.com/get-dvc)
 
-## Interfaces reprises dans Dreame Open Card
+REA parsed the shipped 660,645-byte resource as JavaScript and visited 152,314 syntax nodes. Its output contains 289 static findings. An independent syntax pass also found two explicit `customElements.define` call sites. Dynamic relationships remain partly unresolved. The shipped resource was inspected statically, and the separately delivered activated bundle was unavailable for runtime or static analysis. The premium workflows below are grounded in the vendor’s walkthroughs and public Home Assistant interfaces.
 
-| Fonction | Interface examinée |
+## Product behavior and Home Assistant contracts
+
+| Product workflow | Evidence and implementation implications |
 | --- | --- |
-| Nettoyer par pièce, point ou zone | Actions `vacuum_clean_segment`, `vacuum_clean_spot` et `vacuum_clean_zone` du domaine `dreame_vacuum`. |
-| Pointer sur la carte | La caméra fournit `calibration_points`, avec trois paires de coordonnées `map` et `vacuum`. La carte utilise une transformation affine pour convertir un point de l’image en coordonnées du robot. |
-| Choisir une carte | L’aspirateur expose `maps` et `selected_map_id`. La carte envoie `vacuum_select_map` avec l’identifiant de l’étage. |
-| Consulter les images | La carte de navigation, l’historique et les photos d’obstacles sont accessibles par les URL de caméra de l’instance Home Assistant. |
-| Piloter les réglages | La carte identifie les entités par le registre d’appareils Home Assistant et utilise les actions de leurs domaines. |
+| Global, room, zone and spot cleaning, plus navigation | The product has a task-type selector. The integration exposes segment IDs for room cleaning, rectangular coordinate arrays for zone cleaning, point arrays for spot cleaning, and a separate `x`/`y` pair for navigation. The map camera gives three `calibration_points` pairs in image and vacuum coordinates. [Product guide](https://dvc.tasshack.com/guide/home-screen/task-type) · [Public actions](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/services.yaml) |
+| Floors and object editing | The vacuum publishes saved maps and an active map ID. The product documents selecting and editing restricted areas, carpets, furniture, thresholds, ramps, curtains, low-lying areas and predefined points. Several provide complete lists to the integration, so an editor needs to keep the displayed map and the action payload in sync before replacing a list. [Object editor](https://dvc.tasshack.com/guide/map-management/map-edit) · [Registered action schemas](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/vacuum.py) |
+| Object interaction and imagery | The product exposes context actions for obstacles, carpets and furniture. The integration camera exports obstacle photos and history images through local camera proxy URLs. Its attributes and supported models determine which images are available. [Object selection](https://dvc.tasshack.com/guide/home-screen/object-selection) · [Camera implementation](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/camera.py) |
+| Floor plans and visual configuration | The product documents floor plan rendering and per-map centering, scaling, background and overlay images. An independent editor needs to preserve the transform that maps displayed coordinates back to the robot. The current card uses the rendered camera image and its calibration data. [Display modes](https://dvc.tasshack.com/configuration/basic-configuration#map-display) · [Per-map configuration](https://dvc.tasshack.com/configuration/custom-map-configuration) |
+| Robot settings and remote control | The product exposes device settings and dual controls for movement. The public integration has domain entities for settings and a `vacuum_remote_control_move_step` action. The current card uses discrete movement commands. The activated card’s continuous-control behavior was not captured. [Settings](https://dvc.tasshack.com/guide/device-settings) · [Remote control](https://dvc.tasshack.com/guide/remote-control) · [Action schema](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/services.yaml) |
 
-[Actions et schémas](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/vacuum.py) · [Caméra](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/camera.py) · [Documentation Lovelace](https://developers.home-assistant.io/docs/frontend/custom-ui/custom-card/)
+## Implementation reference
 
-## Références d’analyse
+Piotr Machowski’s MIT-licensed Xiaomi Vacuum Map Card already models room, rectangle and point selections as separate map modes. Its Tasshack preset shows how to build the corresponding Dreame payloads, including per-task repeats. This is an implementation reference for interaction design. The product behavior in the report comes from Tasshack’s card and documentation. [Dreame platform preset](https://github.com/piotrmachowski/lovelace-xiaomi-vacuum-map-card/blob/045c3ac946d4ef0a01201f306e9949643984a155/src/model/generators/platform_templates/Tasshack_dreame-vacuum.json) · [Map mode implementation](https://github.com/piotrmachowski/lovelace-xiaomi-vacuum-map-card/blob/045c3ac946d4ef0a01201f306e9949643984a155/src/model/map_mode/map-mode.ts)
 
-- Scénario REA sur le site public · `ev_4a1786cb475a11c5a6e7ffe90be75e79a89747effd628990d1cab316da337acf`.
-- Analyse REA du fichier local · `ev_78564440b4da28765b31ec1c477dbea6b4bfa9a73acdb57b07f4e12e67da3909`.
-- Fichier JavaScript examiné · 660 645 octets · SHA-256 `161cc7c47696d40a2c0cf16c65327dd38bc027aded429af0df3605358aa486d2`.
+## Evidence identifiers
+
+- Public site capture · `ev_4a1786cb475a11c5a6e7ffe90be75e79a89747effd628990d1cab316da337acf`
+- Shipped frontend static analysis · `ev_78564440b4da28765b31ec1c477dbea6b4bfa9a73acdb57b07f4e12e67da3909`
+- Shipped frontend SHA-256 · `161cc7c47696d40a2c0cf16c65327dd38bc027aded429af0df3605358aa486d2`

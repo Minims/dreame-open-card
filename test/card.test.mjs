@@ -52,10 +52,10 @@ test("only calls an advertised HA action with a dedicated target", async () => {
   };
   await callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_segment", { segments: [3] });
   assert.deepEqual(sent, [["dreame_vacuum", "vacuum_clean_segment", { segments: [3] }, { entity_id: "vacuum.bot" }]]);
-  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_zone"), /indisponible/);
-  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_segment", { entity_id: "vacuum.other" }), /cible/);
+  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_zone"), /unavailable/);
+  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_segment", { entity_id: "vacuum.other" }), /target/);
   hass.states["vacuum.bot"].state = "unavailable";
-  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_segment"), /indisponible/);
+  await assert.rejects(callAction(hass, "vacuum.bot", "dreame_vacuum.vacuum_clean_segment"), /unavailable/);
   assert.equal(sent.length, 1);
 });
 
@@ -64,4 +64,16 @@ test("validates advanced form fields before they reach HA", () => {
   assert.deepEqual(parseFields(fields, { map_id: "14", segments: "[3, 2]", name: " " }), { map_id: 14, segments: [3, 2] });
   assert.throws(() => parseFields(fields, { map_id: "1.5" }), /map_id/);
   assert.throws(() => parseFields(fields, { map_id: "1", segments: "{}" }), /segments/);
+});
+
+test("chooses French for Home Assistant's French locales and English otherwise", async () => {
+  const { languageFor, translate } = await import("../dreame-open-card.js");
+  assert.equal(languageFor({ locale: { language: "fr-CA" }, language: "en" }), "fr");
+  assert.equal(languageFor({ language: "fr_FR" }), "fr");
+  assert.equal(languageFor({ locale: { language: "de-DE" } }), "en");
+  assert.equal(languageFor(), "en");
+  assert.equal(translate("fr", "Clean rooms"), "Nettoyer les pièces");
+  assert.equal(translate("en", "Clean rooms"), "Clean rooms");
+  assert.equal(translate("fr", "Required field · map_id"), "Champ obligatoire · map_id");
+  assert.equal(translate("fr", "Unknown upstream error"), "Unknown upstream error");
 });
