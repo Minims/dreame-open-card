@@ -1,3 +1,5 @@
+export const CARD_VERSION = "2026.11.0a";
+
 const DOMAIN = "dreame_vacuum";
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const SETTING_DOMAINS = new Set(["button", "select", "number", "switch", "time", "sensor", "binary_sensor"]);
@@ -9,6 +11,101 @@ const hasAction = (hass, action) => {
 const dreame = (name) => DOMAIN + ".vacuum_" + name;
 const point = (p) => p && typeof p.x === "number" && Number.isFinite(p.x)
   && typeof p.y === "number" && Number.isFinite(p.y);
+
+const FRENCH = {
+  "The card configuration determines the target.": "La cible est déterminée par la configuration de la carte.",
+  "Device or action unavailable.": "Appareil ou action indisponible.",
+  "Required field": "Champ obligatoire",
+  "Expected an integer": "Entier attendu",
+  "Expected a boolean": "Booléen attendu",
+  "Invalid JSON": "JSON invalide",
+  "Unexpected JSON format": "Format JSON inattendu",
+  "Fill in at least one field.": "Renseignez au moins un champ.",
+  "Start": "Démarrer",
+  "Stop": "Arrêter",
+  "Return to dock": "Retour à la station",
+  "Locate": "Localiser",
+  "Refresh map": "Actualiser la carte",
+  "Clean a spot": "Point",
+  "Clean a zone": "Zone",
+  "Choose two corners that enclose an area.": "Choisissez deux coins qui délimitent une surface.",
+  "Go to point": "Aller au point",
+  "Rename a floor": "Renommer un étage",
+  "Delete a floor": "Supprimer un étage",
+  "Save the new map": "Enregistrer le nouveau plan",
+  "Discard the new map": "Abandonner le nouveau plan",
+  "Replace a floor with the new map": "Remplacer un étage par le nouveau plan",
+  "Rename a room": "Renommer une pièce",
+  "Split a room": "Diviser une pièce",
+  "Merge rooms": "Fusionner des pièces",
+  "Replace virtual walls and restricted zones": "Remplacer murs virtuels et zones interdites",
+  "Replace physical walls and doors": "Remplacer murs physiques et portes",
+  "Floor material": "Matériau du sol",
+  "Place furniture": "Placer le mobilier",
+  "Carpet settings": "Réglages des tapis",
+  "Ignore or restore an obstacle": "Ignorer ou réactiver un obstacle",
+  "Room cleaning order": "Ordre des pièces",
+  "Custom room cleaning": "Nettoyage personnalisé par pièce",
+  "Back up a floor": "Sauvegarder un étage",
+  "Restore a backup": "Restaurer une sauvegarde",
+  "Run a shortcut": "Lancer un raccourci",
+  "Reset a consumable": "Réinitialiser un consommable",
+  "Docked": "À la station",
+  "Cleaning": "Nettoyage",
+  "Paused": "En pause",
+  "Returning to dock": "Retour à la station",
+  "Idle": "Au repos",
+  "Error": "Erreur",
+  "Unavailable": "Indisponible",
+  "Unknown state": "État inconnu",
+  "Vacuum controls": "Commandes de l’aspirateur",
+  "Robot map": "Carte du robot",
+  "Settings, dock and maintenance": "Réglages, station et entretien",
+  "History and photos": "Historique et photos",
+  "Step-by-step remote control": "Télécommande pas à pas",
+  "Map editing and management": "Édition et gestion des cartes",
+  "Room": "Pièce",
+  "Configure a vacuum entity.": "Configurez une entité vacuum.",
+  "map_camera must be a camera entity.": "map_camera doit être une entité camera.",
+  "entities must contain entity IDs.": "entities doit contenir des identifiants d’entité.",
+  "Command sent.": "Commande envoyée.",
+  "The command failed.": "La commande a échoué.",
+  "Camera belongs to another device": "Caméra d’un autre appareil",
+  "Choose a floor": "Choisir un étage",
+  "Map": "Carte",
+  "Switch floor": "Changer d’étage",
+  "Floor": "Étage",
+  "Rooms": "Pièces",
+  "Clean rooms": "Nettoyer les pièces",
+  "Select at least one room.": "Sélectionnez au moins une pièce.",
+  "Choose a point on the map.": "Choisissez un point sur la carte.",
+  "Choose two opposite corners.": "Choisissez deux coins opposés.",
+  "Add coordinates": "Ajouter les coordonnées",
+  "Enter two whole-number coordinates.": "Saisissez deux coordonnées entières.",
+  "Send": "Envoyer",
+  "Clear": "Effacer",
+  "On the map": "Sur la carte",
+  "Complete the selection.": "Complétez la sélection.",
+  "Add Dreame entities with the entities option.": "Ajoutez les entités Dreame avec l’option entities.",
+  "Invalid value.": "Valeur invalide.",
+  "Speed": "Vitesse",
+  "Move one step": "Déplacer d’un pas",
+  "Advanced action": "Action avancée",
+  "Confirm this action on the robot": "Confirmer l’action sur le robot",
+  "Apply": "Appliquer",
+  "Confirm the action": "Confirmez l’action",
+};
+
+export function languageFor(hass) {
+  const locale = hass?.locale?.language ?? hass?.language ?? "";
+  return /^fr(?:[-_]|$)/i.test(locale) ? "fr" : "en";
+}
+
+export function translate(language, message) {
+  if (language !== "fr") return message;
+  const [label] = message.split(" · ", 1);
+  return Object.hasOwn(FRENCH, label) ? FRENCH[label] + message.slice(label.length) : message;
+}
 
 export function mapPoint(calibration, coords) {
   if (!Array.isArray(calibration) || calibration.length < 3
@@ -50,10 +147,10 @@ export function deviceEntities(hass, config) {
 
 export async function callAction(hass, id, action, data = {}) {
   if (["entity_id", "device_id", "area_id", "floor_id", "label_id", "target"].some((key) => Object.hasOwn(data, key))) {
-    throw new Error("La cible est déterminée par la configuration de la carte.");
+    throw new Error("The card configuration determines the target.");
   }
   if (!ENTITY_ID.test(id) || !online(hass?.states?.[id]) || !hasAction(hass, action)) {
-    throw new Error("Appareil ou action indisponible.");
+    throw new Error("Device or action unavailable.");
   }
   const [domain, service] = action.split(".");
   await hass.callService(domain, service, data, { entity_id: id });
@@ -64,78 +161,78 @@ export function parseFields(fields, values) {
   for (const [key, type, required] of fields) {
     const raw = values[key]?.trim();
     if (!raw && !required) continue;
-    if (!raw) throw new Error("Champ obligatoire · " + key);
+    if (!raw) throw new Error("Required field · " + key);
     if (type === "text") {
       data[key] = raw;
     } else if (type === "int") {
-      if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error("Entier attendu · " + key);
+      if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new Error("Expected an integer · " + key);
       data[key] = Number(raw);
     } else if (type === "bool") {
-      if (!["true", "false"].includes(raw)) throw new Error("Booléen attendu · " + key);
+      if (!["true", "false"].includes(raw)) throw new Error("Expected a boolean · " + key);
       data[key] = raw === "true";
     } else {
       let parsed;
-      try { parsed = JSON.parse(raw); } catch { throw new Error("JSON invalide · " + key); }
+      try { parsed = JSON.parse(raw); } catch { throw new Error("Invalid JSON · " + key); }
       if (type === "list" ? !Array.isArray(parsed) : !parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("Format JSON inattendu · " + key);
+        throw new Error("Unexpected JSON format · " + key);
       }
       data[key] = parsed;
     }
   }
-  if (fields.length && !Object.keys(data).length) throw new Error("Renseignez au moins un champ.");
+  if (fields.length && !Object.keys(data).length) throw new Error("Fill in at least one field.");
   return data;
 }
 
 const BASIC = [
-  ["vacuum.start", "Démarrer", 8192],
+  ["vacuum.start", "Start", 8192],
   ["vacuum.pause", "Pause", 4],
-  ["vacuum.stop", "Arrêter", 8],
-  ["vacuum.return_to_base", "Retour à la station", 16],
-  ["vacuum.locate", "Localiser", 512],
-  [dreame("request_map"), "Actualiser la carte"],
+  ["vacuum.stop", "Stop", 8],
+  ["vacuum.return_to_base", "Return to dock", 16],
+  ["vacuum.locate", "Locate", 512],
+  [dreame("request_map"), "Refresh map"],
 ];
 
 const TOOLS = [
-  ["spot", "Point", dreame("clean_spot"), 1, (a) => ({ points: a })],
-  ["zone", "Zone", dreame("clean_zone"), 2, (a, b) => {
+  ["spot", "Clean a spot", dreame("clean_spot"), 1, (a) => ({ points: a })],
+  ["zone", "Clean a zone", dreame("clean_zone"), 2, (a, b) => {
     const zone = mapArea(a, b);
-    if (!zone) throw new Error("Choisissez deux coins qui délimitent une surface.");
+    if (!zone) throw new Error("Choose two corners that enclose an area.");
     return { zone };
   }],
-  ["goto", "Aller au point", dreame("goto"), 1, ([x, y]) => ({ x, y })],
+  ["goto", "Go to point", dreame("goto"), 1, ([x, y]) => ({ x, y })],
 ];
 
 const EDITS = [
-  ["rename_map", "Renommer un étage", [["map_id", "int", true], ["map_name", "text", true]]],
-  ["delete_map", "Supprimer un étage", [["map_id", "int", true]]],
-  ["save_temporary_map", "Enregistrer le nouveau plan", []],
-  ["discard_temporary_map", "Abandonner le nouveau plan", []],
-  ["replace_temporary_map", "Remplacer un étage par le nouveau plan", [["map_id", "int", true]]],
-  ["rename_segment", "Renommer une pièce", [["segment_id", "int", true], ["segment_name", "text", true]]],
-  ["split_segments", "Diviser une pièce", [["segment", "int", true], ["line", "list", true], ["map_id", "int"]]],
-  ["merge_segments", "Fusionner des pièces", [["segments", "list", true], ["map_id", "int"]]],
-  ["set_restricted_zone", "Remplacer murs virtuels et zones interdites",
+  ["rename_map", "Rename a floor", [["map_id", "int", true], ["map_name", "text", true]]],
+  ["delete_map", "Delete a floor", [["map_id", "int", true]]],
+  ["save_temporary_map", "Save the new map", []],
+  ["discard_temporary_map", "Discard the new map", []],
+  ["replace_temporary_map", "Replace a floor with the new map", [["map_id", "int", true]]],
+  ["rename_segment", "Rename a room", [["segment_id", "int", true], ["segment_name", "text", true]]],
+  ["split_segments", "Split a room", [["segment", "int", true], ["line", "list", true], ["map_id", "int"]]],
+  ["merge_segments", "Merge rooms", [["segments", "list", true], ["map_id", "int"]]],
+  ["set_restricted_zone", "Replace virtual walls and restricted zones",
     [["walls", "list"], ["zones", "list"], ["no_mops", "list"]]],
-  ["set_walls", "Remplacer murs physiques et portes", [["walls", "object"], ["doors", "list"], ["map_id", "int"]]],
-  ["set_floor_material", "Matériau du sol", [["material", "object", true], ["map_id", "int"]]],
-  ["set_furniture", "Placer le mobilier", [["furnitures", "list", true], ["map_id", "int"]]],
-  ["set_custom_carpet_cleaning", "Réglages des tapis",
+  ["set_walls", "Replace physical walls and doors", [["walls", "object"], ["doors", "list"], ["map_id", "int"]]],
+  ["set_floor_material", "Floor material", [["material", "object", true], ["map_id", "int"]]],
+  ["set_furniture", "Place furniture", [["furnitures", "list", true], ["map_id", "int"]]],
+  ["set_custom_carpet_cleaning", "Carpet settings",
     [["id", "int", true], ["object_type", "int", true], ["carpet_cleaning", "int", true]]],
-  ["set_obstacle_ignore", "Ignorer ou réactiver un obstacle",
+  ["set_obstacle_ignore", "Ignore or restore an obstacle",
     [["x", "int", true], ["y", "int", true], ["obstacle_ignored", "bool", true]]],
-  ["set_cleaning_sequence", "Ordre des pièces", [["cleaning_sequence", "list", true]]],
-  ["set_custom_cleaning", "Nettoyage personnalisé par pièce",
+  ["set_cleaning_sequence", "Room cleaning order", [["cleaning_sequence", "list", true]]],
+  ["set_custom_cleaning", "Custom room cleaning",
     [["segment_id", "list", true], ["suction_level", "list", true], ["repeats", "list", true], ["water_volume", "list"],
       ["cleaning_mode", "list"], ["wetness_level", "list"]]],
-  ["backup_map", "Sauvegarder un étage", [["map_id", "int", true]]],
-  ["restore_map", "Restaurer une sauvegarde", [["map_id", "int", true], ["recovery_map_index", "int", true]]],
-  ["start_shortcut", "Lancer un raccourci", [["shortcut_id", "int", true]]],
-  ["reset_consumable", "Réinitialiser un consommable", [["consumable", "text", true]]],
+  ["backup_map", "Back up a floor", [["map_id", "int", true]]],
+  ["restore_map", "Restore a backup", [["map_id", "int", true], ["recovery_map_index", "int", true]]],
+  ["start_shortcut", "Run a shortcut", [["shortcut_id", "int", true]]],
+  ["reset_consumable", "Reset a consumable", [["consumable", "text", true]]],
 ];
 
 const STATE_LABELS = {
-  docked: "À la station", cleaning: "Nettoyage", paused: "En pause", returning: "Retour à la station",
-  idle: "Au repos", error: "Erreur", unavailable: "Indisponible", unknown: "État inconnu",
+  docked: "Docked", cleaning: "Cleaning", paused: "Paused", returning: "Returning to dock",
+  idle: "Idle", error: "Error", unavailable: "Unavailable", unknown: "Unknown state",
 };
 
 const TEMPLATE = `
@@ -176,21 +273,21 @@ const TEMPLATE = `
   [hidden] { display:none !important; }
   @media (max-width:650px) { .layout { grid-template-columns:minmax(0,1fr); } }
 </style>
-<ha-card><div class="body">
+<ha-card><div class="body" lang="en">
   <header><h2 id="title"></h2><p class="state" id="state"></p></header>
-  <div class="row" id="basic" aria-label="Commandes de l’aspirateur"></div>
+  <div class="row" id="basic" aria-label="Vacuum controls"></div>
   <div class="layout">
-    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Carte du robot"></div></figure>
+    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"></div></figure>
     <section class="panel">
       <div id="floors"></div>
       <div id="rooms"></div>
       <div id="tools"></div>
     </section>
   </div>
-  <details id="settings-detail"><summary>Réglages, station et entretien</summary><div id="settings"></div></details>
-  <details id="photos-detail" hidden><summary>Historique et photos</summary><div id="photos"></div></details>
-  <details id="remote-detail" hidden><summary>Télécommande pas à pas</summary><div id="remote"></div></details>
-  <details id="edit-detail" hidden><summary>Édition et gestion des cartes</summary><div id="edit"></div></details>
+  <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div></details>
+  <details id="photos-detail" hidden><summary data-i18n>History and photos</summary><div id="photos"></div></details>
+  <details id="remote-detail" hidden><summary data-i18n>Step-by-step remote control</summary><div id="remote"></div></details>
+  <details id="edit-detail" hidden><summary data-i18n>Map editing and management</summary><div id="edit"></div></details>
   <output id="result" role="status" aria-live="polite"></output>
 </div></ha-card>`;
 
@@ -202,13 +299,13 @@ function element(tag, text, attrs = {}) {
 }
 
 const caption = (state, id) => state?.attributes?.friendly_name || id;
-const roomName = (room, id) => room?.name || "Pièce " + id;
 
 class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   constructor() {
     super();
     this.attachShadow({ mode: "open" }).innerHTML = TEMPLATE;
     this.sections = new Map();
+    this.language = "en";
     this.picks = [];
     this.pending = new Set();
     this.part("map").addEventListener("click", (event) => this.pickOnMap(event));
@@ -216,13 +313,32 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   part(id) { return this.shadowRoot.getElementById(id); }
 
+  t(message) { return translate(this.language, message); }
+
+  updateLanguage() {
+    const language = languageFor(this.ha);
+    if (language === this.language) return;
+    this.language = language;
+    this.sections.clear();
+    this.shadowRoot.querySelector(".body").lang = language;
+    this.part("basic").setAttribute("aria-label", this.t("Vacuum controls"));
+    this.part("map").alt = this.t("Robot map");
+    for (const summary of this.shadowRoot.querySelectorAll("[data-i18n]")) {
+      const message = summary.dataset.i18n || summary.textContent;
+      summary.dataset.i18n = message;
+      summary.textContent = this.t(message);
+    }
+    const output = this.part("result");
+    if (this.statusMessage) output.textContent = this.t(this.statusMessage);
+  }
+
   setConfig(config) {
-    if (!/^vacuum\.[a-z0-9_]+$/.test(config.entity ?? "")) throw new Error("Configurez une entité vacuum.");
+    if (!/^vacuum\.[a-z0-9_]+$/.test(config.entity ?? "")) throw new Error(this.t("Configure a vacuum entity."));
     if (config.map_camera != null && !/^camera\.[a-z0-9_]+$/.test(config.map_camera)) {
-      throw new Error("map_camera doit être une entité camera.");
+      throw new Error(this.t("map_camera must be a camera entity."));
     }
     if (config.entities != null && (!Array.isArray(config.entities) || config.entities.some((id) => !ENTITY_ID.test(id)))) {
-      throw new Error("entities doit contenir des identifiants d’entité.");
+      throw new Error(this.t("entities must contain entity IDs."));
     }
     this.config = config;
     this.sections.clear();
@@ -261,7 +377,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   status(message, error = false) {
     const output = this.part("result");
-    output.textContent = message;
+    this.statusMessage = message;
+    output.textContent = this.t(message);
     output.toggleAttribute("data-error", error);
   }
 
@@ -271,10 +388,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.pending.add(pendingKey);
     try {
       await callAction(this.ha, id, action, data);
-      this.status("Commande envoyée.");
+      this.status("Command sent.");
       return true;
     } catch (error) {
-      this.status(error?.message || "La commande a échoué.", true);
+      this.status(error?.message || "The command failed.", true);
       return false;
     } finally {
       this.pending.delete(pendingKey);
@@ -283,6 +400,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   update() {
     if (!this.config || !this.ha) return;
+    this.updateLanguage();
     const { entity, map_camera, title } = this.config;
     const vacuum = this.ha.states[entity];
     const attrs = vacuum?.attributes ?? {};
@@ -315,29 +433,29 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const state = vacuum?.state ?? "unavailable";
     const error = typeof attrs.error === "string" && !/^(none|no_error|unknown|ok)$/i.test(attrs.error) ? attrs.error : null;
     const faults = Object.values(attrs.faults ?? {}).filter((fault) => typeof fault === "string");
-    this.part("state").textContent = [STATE_LABELS[state] ?? state,
+    this.part("state").textContent = [this.t(STATE_LABELS[state] ?? state),
       (typeof battery === "number" || /^\d+$/.test(battery ?? "")) ? battery + " %" : null,
-      ...new Set([error, ...faults]), !relatedCamera ? "Caméra d’un autre appareil" : null].filter(Boolean).join(" · ");
+      ...new Set([error, ...faults]), !relatedCamera ? this.t("Camera belongs to another device") : null].filter(Boolean).join(" · ");
 
     const basic = BASIC.filter(([action, , flag]) => can(action)
       && (!flag || attrs.supported_features == null || (attrs.supported_features & flag)));
     this.section("basic", [basic, available], (node) => node.replaceChildren(...basic.map(([action, label], i) =>
-      this.button(label, () => this.run(action), !available, i === 0))));
+      this.button(this.t(label), () => this.run(action), !available, i === 0))));
 
     const maps = Array.isArray(attrs.maps) ? attrs.maps.filter((entry) => Number.isSafeInteger(Number(entry?.id)) && Number(entry.id) > 0) : [];
     this.section("floors", [maps, activeMapId, available, can(dreame("select_map"))], (node) => {
       node.replaceChildren();
       if (!maps.length || !can(dreame("select_map"))) return;
       const select = element("select");
-      const placeholder = element("option", "Choisir un étage", { value: "" });
+      const placeholder = element("option", this.t("Choose a floor"), { value: "" });
       placeholder.disabled = true;
-      select.append(placeholder, ...maps.map(({ id, name }) => element("option", name || "Carte " + id, { value: id })));
+      select.append(placeholder, ...maps.map(({ id, name }) => element("option", name || this.t("Map") + " " + id, { value: id })));
       select.value = maps.some((entry) => String(entry.id) === String(activeMapId)) ? String(activeMapId) : "";
       select.disabled = !available;
-      const button = this.button("Changer d’étage", () => {
+      const button = this.button(this.t("Switch floor"), () => {
         if (select.value) void this.run(dreame("select_map"), { map_id: Number(select.value) });
       }, !available);
-      node.append(this.label("Étage", select), button);
+      node.append(this.label(this.t("Floor"), select), button);
     });
 
     const selectedRooms = Object.entries(
@@ -350,14 +468,14 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const boxes = selectedRooms.map(([id, room]) => {
         const box = element("input", null, { type: "checkbox", value: id });
         box.disabled = !available;
-        node.append(this.label(roomName(room, id), box));
+        node.append(this.label(room?.name || this.t("Room") + " " + id, box));
         return box;
       });
-      node.prepend(element("h3", "Pièces"));
-      node.append(this.button("Nettoyer les pièces", () => {
+      node.prepend(element("h3", this.t("Rooms")));
+      node.append(this.button(this.t("Clean rooms"), () => {
         const segments = boxes.filter((box) => box.checked).map((box) => Number(box.value));
         if (!segments.length) {
-          this.status("Sélectionnez au moins une pièce.", true);
+          this.status("Select at least one room.", true);
           return;
         }
         void this.run(dreame("clean_segment"), { segments });
@@ -371,13 +489,13 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.toolSelect = null;
       if (!tools.length || !calibrated) return;
       const select = element("select");
-      select.append(...tools.map(([key, label]) => element("option", label, { value: key })));
+      select.append(...tools.map(([key, label]) => element("option", this.t(label), { value: key })));
       select.disabled = !available;
       this.toolSelect = select;
       const help = element("p");
       const setHelp = () => {
         const count = this.selectedTool()[3];
-        help.textContent = count === 1 ? "Choisissez un point sur la carte." : "Choisissez deux coins opposés.";
+        help.textContent = this.t(count === 1 ? "Choose a point on the map." : "Choose two opposite corners.");
       };
       select.addEventListener("change", () => {
         this.picks = [];
@@ -387,15 +505,15 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       setHelp();
       const coords = [0, 1].map((i) => element("input", null, { type: "number", step: "1", "aria-label": i ? "Y" : "X" }));
       const fields = element("div", null, { class: "row" });
-      fields.append(...coords, this.button("Ajouter les coordonnées", () => {
+      fields.append(...coords, this.button(this.t("Add coordinates"), () => {
         const xy = coords.map((input) => input.valueAsNumber);
         if (xy.every(Number.isSafeInteger)) this.addPick(xy);
-        else this.status("Saisissez deux coordonnées entières.", true);
+        else this.status("Enter two whole-number coordinates.", true);
       }, !available));
       const buttons = element("div", null, { class: "row" });
-      buttons.append(this.button("Envoyer", () => this.sendPicks(), !available, true),
-        this.button("Effacer", () => { this.picks = []; this.showPicks(); }));
-      node.append(this.label("Sur la carte", select), help, fields, buttons, element("p", "", { id: "coordinates" }));
+      buttons.append(this.button(this.t("Send"), () => this.sendPicks(), !available, true),
+        this.button(this.t("Clear"), () => { this.picks = []; this.showPicks(); }));
+      node.append(this.label(this.t("On the map"), select), help, fields, buttons, element("p", "", { id: "coordinates" }));
       this.showPicks();
     });
     this.part("map-layer").classList.toggle("picking", calibrated && available && !!tools.length);
@@ -474,7 +592,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   async sendPicks() {
     const tool = this.selectedTool();
     if (!tool || this.picks.length !== tool[3]) {
-      this.status("Complétez la sélection.", true);
+      this.status("Complete the selection.", true);
       return;
     }
     const picks = this.picks;
@@ -490,7 +608,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   renderSettings(node, ids) {
     node.replaceChildren();
     if (!ids.length) {
-      node.append(element("p", "Ajoutez les entités Dreame avec l’option entities."));
+      node.append(element("p", this.t("Add Dreame entities with the entities option.")));
       return;
     }
     for (const id of ids) {
@@ -533,7 +651,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         control.disabled = !available || !hasAction(this.ha, action);
         control.addEventListener("change", async () => {
           if (!control.checkValidity() || (domain !== "switch" && !control.value)) {
-            this.status("Valeur invalide.", true);
+            this.status("Invalid value.", true);
             return;
           }
           if (!await this.run(action, payload(), id)) {
@@ -552,8 +670,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const rotation = element("input", null, { type: "range", min: "-180", max: "180", step: "5", value: "0" });
     const velocity = element("input", null, { type: "range", min: "-200", max: "200", step: "10", value: "0" });
     const form = element("form");
-    form.append(this.label("Rotation", rotation), this.label("Vitesse", velocity));
-    form.append(this.button("Déplacer d’un pas", async () => {
+    form.append(this.label("Rotation", rotation), this.label(this.t("Speed"), velocity));
+    form.append(this.button(this.t("Move one step"), async () => {
       const sent = await this.run(action, { rotation: rotation.valueAsNumber, velocity: velocity.valueAsNumber });
       if (sent) { rotation.value = "0"; velocity.value = "0"; }
     }, !available));
@@ -563,8 +681,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   renderEdits(node, edits, available) {
     node.replaceChildren();
     if (!edits.length) return;
-    const select = element("select", null, { "aria-label": "Action avancée" });
-    select.append(...edits.map(([value, label]) => element("option", label, { value })));
+    const select = element("select", null, { "aria-label": this.t("Advanced action") });
+    select.append(...edits.map(([value, label]) => element("option", this.t(label), { value })));
     select.disabled = !available;
     const form = element("form");
     const fill = () => {
@@ -579,11 +697,11 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         form.append(this.label(name, input));
       }
       const ack = element("input", null, { type: "checkbox" });
-      form.append(this.label("Confirmer l’action sur le robot", ack));
-      form.append(this.button("Appliquer", async () => {
+      form.append(this.label(this.t("Confirm this action on the robot"), ack));
+      form.append(this.button(this.t("Apply"), async () => {
         if (!form.reportValidity()) return;
         if (!ack.checked) {
-          this.status("Confirmez l’action · " + title, true);
+          this.status("Confirm the action · " + this.t(title), true);
           return;
         }
         try {
@@ -604,5 +722,5 @@ if (globalThis.customElements && !customElements.get("dreame-open-card")) {
   customElements.define("dreame-open-card", DreameOpenCard);
   globalThis.customCards ??= [];
   globalThis.customCards.push({ type: "dreame-open-card", name: "Dreame Open Card",
-    description: "Commandes et cartes Dreame pour Home Assistant." });
+    description: "Dreame controls and maps for Home Assistant." });
 }
