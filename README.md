@@ -26,7 +26,26 @@ entity: vacuum.dreame
 map_camera: camera.dreame_map
 ```
 
-`map_camera` and `title` are optional. Use a **Panel** view for a full-width card. If the card cannot discover your settings and maintenance entities, list them explicitly.
+`map_camera` and `title` are optional. Use a **Panel** view for a full-width card. The card also supports an internal responsive panel mode and additive map display settings:
+
+```yaml
+type: custom:dreame-open-card
+entity: vacuum.dreame
+map_camera: camera.dreame_map
+mode: panel
+features:
+  dock: true
+  maintenance: true
+  history: true
+  remote: true
+  editing: true
+map:
+  rotation: 0
+  scale: 1
+  offset: [0, 0]
+```
+
+If the card cannot discover your settings and maintenance entities, list them explicitly.
 
 ```yaml
 type: custom:dreame-open-card
@@ -48,6 +67,7 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 - Control the dock, change settings and see maintenance data through entities exposed by the integration. Scheduling controls depend on the entities available on the instance.
 - View history and obstacle photos, see error details and send step-by-step remote control commands where supported.
 - Rename, split and merge rooms, back up and restore maps, and edit walls, restricted zones, carpets, furniture and floor materials through action forms. Advanced actions require confirmation. The field names match the Home Assistant action schema.
+- Use responsive panel mode with Home Assistant theme colors, keyboard-focus styles and capability-driven controls. Unsupported model actions remain hidden or disabled instead of producing invalid service calls.
 
 Feature availability depends on the vacuum model, integration version and enabled entities. The card was developed against Dreame Vacuum v2.0.3. Full graphical map editing, custom floor backgrounds, continuous steering and live video are outside the current implementation.
 
