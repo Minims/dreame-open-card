@@ -145,6 +145,62 @@ export function deviceEntities(hass, config) {
   return [...new Set(ids)].filter((id) => SETTING_DOMAINS.has(id.split(".")[0]) && hass.states[id]).sort();
 }
 
+export function availableActions(hass, actions) {
+  return [...new Set(actions)].filter((action) => hasAction(hass, action));
+}
+
+export function buildCleaningTask(mode, selection = {}) {
+  const integerPoint = (value) => Array.isArray(value) && value.length === 2
+    && value.every((part) => Number.isSafeInteger(part)) ? value : null;
+  if (mode === "global") return { action: "vacuum.start", data: {} };
+  if (mode === "room") {
+    if (!Array.isArray(selection.rooms) || !selection.rooms.length || !selection.rooms.every((id) => Number.isSafeInteger(id) && id > 0)) {
+      throw new Error("Choose at least one room.");
+    }
+    return { action: dreame("clean_segment"), data: { segments: [...selection.rooms] } };
+  }
+  if (mode === "zone") {
+    const corners = selection.corners;
+    if (!Array.isArray(corners) || corners.length !== 2 || !corners.every(integerPoint)) throw new Error("Choose two corners for the zone.");
+    const zone = mapArea(corners[0], corners[1]);
+    if (!zone) throw new Error("Choose two corners for the zone.");
+    return { action: dreame("clean_zone"), data: { zone } };
+  }
+  if (mode === "spot") {
+    const pointValue = integerPoint(selection.point);
+    if (!pointValue) throw new Error("Choose a valid spot point.");
+    return { action: dreame("clean_spot"), data: { points: [pointValue] } };
+  }
+  if (mode === "goto") {
+    const pointValue = integerPoint(selection.point);
+    if (!pointValue) throw new Error("Choose a valid destination point.");
+    return { action: dreame("goto"), data: { x: pointValue[0], y: pointValue[1] } };
+  }
+  throw new Error("Unknown cleaning task.");
+}
+
+export function capabilityEntities(hass, config) {
+  return Object.fromEntries(deviceEntities(hass, config).map((id) => [id, hass.states[id]]));
+}
+
+export function mapEditPayload(operation, values = {}) {
+  const destructive = new Set(["delete_map", "replace_temporary_map", "restore_map", "set_restricted_zone", "set_walls", "set_floor_material", "set_furniture", "set_custom_carpet_cleaning", "set_obstacle_ignore", "set_cleaning_sequence", "set_custom_cleaning"]);
+  if (destructive.has(operation) && values.confirm !== true && values.confirm !== "true") throw new Error("Confirm this action before applying the map edit.");
+  const definitions = Object.fromEntries(EDITS.map(([key, , fields]) => [key, fields]));
+  if (!definitions[operation]) throw new Error("Unknown map edit.");
+  return parseFields(definitions[operation], values);
+}
+
+export function validateCardConfig(config = {}) {
+  if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
+  const map = config.map ?? {};
+  if (map.scale != null && (!Number.isFinite(map.scale) || map.scale <= 0)) throw new Error("map.scale must be positive.");
+  if (map.rotation != null && (!Number.isFinite(map.rotation) || map.rotation < -360 || map.rotation > 360)) throw new Error("map.rotation is invalid.");
+  if (map.offset != null && (!Array.isArray(map.offset) || map.offset.length !== 2 || !map.offset.every(Number.isFinite))) throw new Error("map.offset must contain two numbers.");
+  if (config.features != null && (typeof config.features !== "object" || Array.isArray(config.features))) throw new Error("features must be an object.");
+  return true;
+}
+
 export async function callAction(hass, id, action, data = {}) {
   if (["entity_id", "device_id", "area_id", "floor_id", "label_id", "target"].some((key) => Object.hasOwn(data, key))) {
     throw new Error("The card configuration determines the target.");
@@ -247,6 +303,8 @@ const TEMPLATE = `
   header { justify-content:space-between; }
   .state { color:var(--secondary-text-color,#50635a); }
   .layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:16px; }
+  .body.panel-mode { padding:clamp(18px,4vw,34px); }
+  .body.panel-mode .layout { grid-template-columns:minmax(0,3fr) minmax(280px,1fr); }
   .layout:has(figure[hidden]) { grid-template-columns:minmax(0,1fr); }
   .panel { min-width:0; display:grid; align-content:start; gap:12px; }
   figure { display:grid; place-items:center; position:relative; margin:0; overflow:hidden; border-radius:14px;
@@ -340,7 +398,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (config.entities != null && (!Array.isArray(config.entities) || config.entities.some((id) => !ENTITY_ID.test(id)))) {
       throw new Error(this.t("entities must contain entity IDs."));
     }
+    validateCardConfig(config);
     this.config = config;
+    this.shadowRoot.querySelector(".body").classList.toggle("panel-mode", config.mode === "panel");
     this.sections.clear();
     this.scope = undefined;
     this.picks = [];
@@ -419,7 +479,15 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const imageNode = this.part("map");
     this.part("figure").hidden = !image;
     if (image && imageNode.getAttribute("src") !== image) imageNode.setAttribute("src", image);
-    if (!image) imageNode.removeAttribute("src");
+    if (image) {
+      const display = this.config.map ?? {};
+      const [x, y] = display.offset ?? [0, 0];
+      imageNode.style.transform = `translate(${x}px, ${y}px) rotate(${display.rotation ?? 0}deg) scale(${display.scale ?? 1})`;
+      imageNode.style.transformOrigin = "center";
+    } else {
+      imageNode.removeAttribute("src");
+      imageNode.style.removeProperty("transform");
+    }
     this.calibration = image && liveMap ? map.calibration_points : null;
     const scope = JSON.stringify([entity, map_camera, activeMapId, cameraMapId, this.calibration, available]);
     if (scope !== this.scope) {
@@ -516,7 +584,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       node.append(this.label(this.t("On the map"), select), help, fields, buttons, element("p", "", { id: "coordinates" }));
       this.showPicks();
     });
-    this.part("map-layer").classList.toggle("picking", calibrated && available && !!tools.length);
+    const display = this.config.map ?? {};
+    const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
+    this.part("map-layer").classList.toggle("picking", calibrated && available && !!tools.length && !transformed);
 
     const ids = deviceEntities(this.ha, this.config);
     const settingActions = ["button.press", "switch.turn_on", "switch.turn_off", "number.set_value",
@@ -554,7 +624,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   selectedTool() { return TOOLS.find(([key]) => key === this.toolSelect?.value); }
 
   pickOnMap(event) {
-    if (!this.selectedTool() || !online(this.ha.states[this.config.entity])) return;
+    const display = this.config.map ?? {};
+    const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
+    if (transformed || !this.selectedTool() || !online(this.ha.states[this.config.entity])) return;
     const img = this.part("map");
     // Avoid using the previous decoded image while the current image is loading.
     if (!img.complete || !img.naturalWidth) return;
@@ -705,7 +777,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
           return;
         }
         try {
-          const data = parseFields(fields, Object.fromEntries(new FormData(form)));
+          const values = Object.fromEntries(new FormData(form));
+          values.confirm = ack.checked;
+          const data = mapEditPayload(key, values);
           ack.checked = false;
           await this.run(dreame(key), data);
         } catch (error) { this.status(error.message, true); }
