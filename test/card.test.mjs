@@ -133,6 +133,13 @@ test("ignores map objects without safe coordinates", async () => {
   assert.deepEqual(mapObjectMarkers({ obstacles: { bad: { x: "20", y: 30 } }, carpets: [[0, 0, 0, 10]] }, calibration, 100, 100), []);
 });
 
+test("builds replacement map-object lists from existing rows plus a new rectangle", async () => {
+  const { appendMapRectangle } = await import("../dreame-open-card.js");
+  assert.deepEqual(appendMapRectangle([[1, 2, 3, 4]], [8, 9], [5, 6], "zones"), [[1, 2, 3, 4], [5, 6, 8, 9]]);
+  assert.deepEqual(appendMapRectangle([], [8, 9], [5, 6], "no_mops"), [[5, 6, 8, 9]]);
+  assert.throws(() => appendMapRectangle([[1, 2, 3, 4]], [5, 5], [5, 8], "zones"), /rectangle/i);
+});
+
 test("reads schedule and shortcut collections without inventing entries", async () => {
   const { scheduleEntries, shortcutEntries } = await import("../dreame-open-card.js");
   assert.deepEqual(scheduleEntries({ morning: { enabled: true, time: "07:30", days: [1, 3] }, bad: "ignored" }),
