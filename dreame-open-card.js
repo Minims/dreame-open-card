@@ -309,6 +309,33 @@ export function mapObjectSummary(attributes = {}) {
     ? [{ key, label, count: Array.isArray(attributes[key]) ? attributes[key].length : Object.keys(attributes[key]).length }] : []);
 }
 
+export function mapObjectMarkers(attributes, calibration, width, height) {
+  const markers = [];
+  const project = (point) => {
+    if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isSafeInteger)) return null;
+    const result = projectPoint(calibration, point, "vacuum", "map");
+    const position = result && [result[0] / width, result[1] / height];
+    return position?.every((axis) => axis >= 0 && axis <= 1) ? position : null;
+  };
+  const addPoint = (kind, key, point, label) => {
+    const position = project(point);
+    if (position) markers.push({ kind, key, label: label ?? key, x: position[0], y: position[1] });
+  };
+  for (const [key, object] of Object.entries(attributes?.obstacles ?? {})) addPoint("obstacles", key, [object?.x, object?.y], object?.type);
+  for (const [index, rectangle] of (attributes?.carpets ?? []).entries()) {
+    if (Array.isArray(rectangle) && rectangle.length === 4 && rectangle.every(Number.isSafeInteger)
+      && rectangle[0] !== rectangle[2] && rectangle[1] !== rectangle[3]) {
+      addPoint("carpets", String(index), [(rectangle[0] + rectangle[2]) / 2, (rectangle[1] + rectangle[3]) / 2], "Carpet");
+    }
+  }
+  for (const [index, object] of (attributes?.furnitures ?? attributes?.furniture ?? []).entries()) {
+    if ([object?.x0, object?.y0, object?.x1, object?.y1].every(Number.isSafeInteger)) {
+      addPoint("furniture", String(index), [(object.x0 + object.x1) / 2, (object.y0 + object.y1) / 2], object.type ?? "Furniture");
+    }
+  }
+  return markers;
+}
+
 export function scheduleEntries(attributes = {}) {
   return Object.entries(attributes).flatMap(([name, value]) => value && typeof value === "object"
     ? [{ name, enabled: value.enabled !== false, time: value.time ?? value.start_time ?? null, days: value.days ?? [] }] : []);
@@ -562,6 +589,10 @@ const TEMPLATE = `
     min-height:32px; max-width:85%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
   #room-markers button[aria-pressed="true"] { background:#007d9d; z-index:1; }
   #room-markers button[data-order]::before { content:attr(data-order) " · "; }
+  #object-markers { position:absolute; inset:0; pointer-events:none; }
+  #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
+    padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
+  #object-markers button[aria-pressed="true"] { background:#007d9d; }
   details { border-top:1px solid var(--divider-color,#aebcb5); padding:10px 0 0; }
   details > div, form { display:grid; gap:10px; margin-top:10px; }
   summary { cursor:pointer; font-weight:600; }
@@ -584,7 +615,7 @@ const TEMPLATE = `
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
-    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><div id="room-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
+    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -633,11 +664,13 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.picks = [];
     this.zones = [];
     this.roomSelection = new Set();
+    this.objectSelection = null;
     this.pending = new Set();
     const map = this.part("map");
     map.addEventListener("click", (event) => this.pickOnMap(event));
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderRoomMarkers();
+      this.renderObjectMarkers();
       this.renderZones();
     });
     const overlay = this.part("zone-overlay");
@@ -768,6 +801,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     this.part("map-layer").classList.toggle("picking", this.mapPicking && !this.part("tools").hidden);
     this.renderRoomMarkers();
+    this.renderObjectMarkers();
     this.renderZones();
     this.updateTargetButton();
   }
@@ -822,6 +856,41 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       return button;
     })));
     this.syncRoomSelection();
+  }
+
+  renderObjectMarkers() {
+    const img = this.part("map");
+    const target = this.part("object-markers");
+    const markers = mapObjectMarkers(this.currentMap, this.calibration, img.naturalWidth, img.naturalHeight);
+    target.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || !markers.length;
+    if (target.hidden) return;
+    this.section("object-markers", markers, (node) => node.replaceChildren(...markers.map((marker) => {
+      const button = this.button(marker.label, () => {
+        this.objectSelection = marker;
+        for (const sibling of node.children) sibling.setAttribute("aria-pressed", String(sibling === button));
+        this.renderObjectEditor();
+      });
+      button.dataset.object = `${marker.kind}:${marker.key}`;
+      button.setAttribute("aria-pressed", String(this.objectSelection?.kind === marker.kind && this.objectSelection?.key === marker.key));
+      button.style.left = `${marker.x * 100}%`;
+      button.style.top = `${marker.y * 100}%`;
+      return button;
+    })));
+  }
+
+  renderObjectEditor() {
+    if (!this.objectSelection) return;
+    const editor = this.part("editor");
+    this.part("editor-detail").hidden = false;
+    const { kind, label } = this.objectSelection;
+    editor.replaceChildren(element("p", `${this.t("Map objects")}: ${label}`));
+    if (kind === "obstacles" && hasAction(this.ha, dreame("set_obstacle_ignore"))) {
+      editor.append(this.button(this.t("Ignore or restore an obstacle"), () => {
+        void this.run(dreame("set_obstacle_ignore"), { x: this.objectSelection.x, y: this.objectSelection.y, obstacle_ignored: true });
+      }, !online(this.ha.states[this.config.entity]), true));
+    } else {
+      editor.append(element("p", this.t("Advanced action") + " · " + this.t("Confirm the action")));
+    }
   }
 
   updateTargetButton() {
@@ -1084,6 +1153,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       imageNode.style.removeProperty("transform");
     }
     this.calibration = image && liveMap ? map.calibration_points : null;
+    this.currentMap = map;
     const scope = JSON.stringify([entity, map_camera, activeMapId, attrs.selected_map, cameraMapId, this.calibration, available]);
     if (scope !== this.scope) {
       this.scope = scope;
