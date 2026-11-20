@@ -4,6 +4,8 @@ const DOMAIN = "dreame_vacuum";
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const SETTING_DOMAINS = new Set(["button", "select", "number", "switch", "time", "sensor", "binary_sensor"]);
 const PANEL_FEATURES = ["dock", "maintenance", "history", "remote", "editing"];
+const COLOR_SCHEMES = ["dreame_light", "dreame_dark", "dreame_auto", "mijia_light", "mijia_dark", "mijia_auto", "grayscale"];
+const ICON_SETS = ["dreame", "dreame_old", "mijia", "material"];
 const online = (state) => state && !["unavailable", "unknown"].includes(state.state);
 // A Home Assistant button has no last-pressed timestamp before its first press.
 const pressable = (state) => state && state.state !== "unavailable";
@@ -429,6 +431,9 @@ export function validateCardConfig(config = {}) {
       throw new Error(`features.${key} must be a boolean.`);
     }
   }
+  if (config.color_scheme != null && !COLOR_SCHEMES.includes(config.color_scheme)) throw new Error("color_scheme is invalid.");
+  if (config.icon_set != null && !ICON_SETS.includes(config.icon_set)) throw new Error("icon_set is invalid.");
+  if (config.locked != null && !["never", "only_touch"].includes(config.locked)) throw new Error("locked is invalid.");
   return true;
 }
 
@@ -530,6 +535,9 @@ const TEMPLATE = `
   :host { display:block; color:var(--primary-text-color,#151515); }
   ha-card { --accent:#0099bf; --control-bg:var(--dvc-control-bg,#e0e0e0);
     background:var(--ha-card-background,var(--card-background-color,#fff)); }
+  .body.scheme-dreame-dark { --accent:#0099bf; color:#eee; background:#1b1b1b; }
+  .body.scheme-dreame-light { --accent:#0099bf; }
+  .body.scheme-grayscale { --accent:#555; filter:grayscale(.85); }
   .body { position:relative; padding:16px 8px 20px; display:grid; gap:16px; }
   h2,h3,p { margin:0; }
   h2 { font-size:20px; font-weight:500; }
@@ -730,6 +738,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.config = config;
     this.mode = "global";
     this.shadowRoot.querySelector(".body").classList.toggle("panel-mode", config.mode === "panel");
+    const scheme = config.color_scheme ?? "dreame_light";
+    const body = this.shadowRoot.querySelector(".body");
+    body.classList.remove("scheme-dreame-dark", "scheme-dreame-light", "scheme-grayscale");
+    body.classList.add(`scheme-${scheme === "dreame_dark" ? "dreame-dark" : scheme === "grayscale" ? "grayscale" : "dreame-light"}`);
     this.sections.clear();
     this.scope = undefined;
     this.clearPicks();
@@ -1638,6 +1650,18 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (!available) return;
       void this.run(action, { rotation: rotation.valueAsNumber, velocity: velocity.valueAsNumber });
     };
+    const keyMap = { w: ["velocity", 200], s: ["velocity", -200], a: ["rotation", -180], d: ["rotation", 180], ArrowUp: ["velocity", 200], ArrowDown: ["velocity", -200], ArrowLeft: ["rotation", -180], ArrowRight: ["rotation", 180] };
+    const keydown = (event) => {
+      const mapped = keyMap[event.key];
+      if (!mapped || event.repeat) return;
+      event.preventDefault();
+      const input = mapped[0] === "velocity" ? velocity : rotation;
+      input.value = String(mapped[1] * ((event.shiftKey || event.ctrlKey) ? .5 : 1));
+      send();
+    };
+    const keyup = (event) => { if (keyMap[event.key]) stop(); };
+    node.addEventListener("keydown", keydown);
+    node.addEventListener("keyup", keyup);
     const stop = () => {
       clearInterval(timer);
       timer = undefined;
