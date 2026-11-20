@@ -46,6 +46,7 @@ map:
 ```
 
 If the card cannot discover your settings and maintenance entities, list them explicitly.
+Set a `features` entry to `false` to hide its dedicated view. These switches do not change Home Assistant permissions or remove entities from the generic settings list.
 
 ```yaml
 type: custom:dreame-open-card
@@ -64,8 +65,15 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 
 - Start, pause, stop, return to dock, locate and see the battery level.
 - Clean rooms, zones or spots, send the robot to a point and switch floors. Map selection requires a live map camera with calibration data.
-- Control the dock, change settings and see maintenance data through entities exposed by the integration. Scheduling controls depend on the entities available on the instance.
-- View history and obstacle photos, see error details and send step-by-step remote control commands where supported.
+- In room mode, select labeled markers on the active map or use the room checklist below it. The card sends rooms in selection order; the robot may choose a different order. Markers require room bounds, a matching map and no display transform.
+- In zone mode, pick two opposite corners per zone. Drag either numbered handle or focus it and use the arrow keys to resize the zone. Remove zones individually below the map. The card sends the remaining zones together; it does not detect walls or cleanable floor.
+- Open the station sheet to see available tank and bag statuses, start or stop supported wash and dry cycles, or trigger auto-empty. The card falls back to a return-to-dock button if no station entities are found.
+- Select and remove multiple points in spot mode. Go-to still accepts a single destination.
+- View consumable estimates in **Accessory usage**, and change exposed device settings through the generic controls. Scheduling controls depend on the entities available on the instance.
+- Browse cleaning and cruising history from the integration's history sensors, with inline session maps when the camera supplies a matching image. Preview recovery and Wi-Fi maps when available, open obstacle photos, and use step-by-step remote control.
+- Open the map editor view for floor background/overlay presentation settings, and use the object summary to see which map collections the integration supplied. Destructive object editing remains behind confirmed action forms.
+- View discovered schedules and shortcuts when the integration exposes them. Existing schedule/shortcut content is shown read-only except for supported shortcut execution.
+- Remote control uses repeated 250 ms step commands while a slider is active and sends a zeroed stop command on release, change or focus loss. Actual safe continuous steering still depends on the robot model and integration.
 - Rename, split and merge rooms, back up and restore maps, and edit walls, restricted zones, carpets, furniture and floor materials through action forms. Advanced actions require confirmation. The field names match the Home Assistant action schema.
 - Use responsive panel mode with Home Assistant theme colors, keyboard-focus styles and capability-driven controls. Unsupported model actions remain hidden or disabled instead of producing invalid service calls.
 
