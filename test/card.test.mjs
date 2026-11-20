@@ -241,6 +241,10 @@ test("validates additive panel and map configuration", async () => {
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", mode: "compact" }), /mode/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", map: { scale: 0 } }), /scale/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", map: { offset: [1] } }), /offset/i);
+  assert.equal(validateCardConfig({ entity: "vacuum.bot", color_scheme: "dreame_dark", icon_set: "material", locked: "only_touch" }), true);
+  assert.throws(() => validateCardConfig({ entity: "vacuum.bot", color_scheme: "unknown" }), /color_scheme/i);
+  assert.throws(() => validateCardConfig({ entity: "vacuum.bot", icon_set: "unknown" }), /icon_set/i);
+  assert.throws(() => validateCardConfig({ entity: "vacuum.bot", locked: "always" }), /locked/i);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {
