@@ -615,6 +615,12 @@ const TEMPLATE = `
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
+  #map-objects { position:absolute; inset:0; pointer-events:none; }
+  #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
+  #map-objects .wall { stroke:#0b8fe3; stroke-width:4; }
+  #map-objects .threshold { stroke:#8c6b2f; stroke-width:3; stroke-dasharray:5 3; }
+  #map-objects .restricted { fill:#d9464630; stroke:#d94646; stroke-width:2; }
+  #map-objects .carpet { fill:#f4cf4d30; stroke:#d8a600; stroke-width:2; }
   details { border-top:1px solid var(--divider-color,#aebcb5); padding:10px 0 0; }
   details > div, form { display:grid; gap:10px; margin-top:10px; }
   summary { cursor:pointer; font-weight:600; }
@@ -637,7 +643,7 @@ const TEMPLATE = `
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
-    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
+    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -694,6 +700,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderRoomMarkers();
       this.renderObjectMarkers();
+      this.renderMapObjectLayers();
       this.renderZones();
     });
     const overlay = this.part("zone-overlay");
@@ -829,6 +836,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.part("map-layer").classList.toggle("picking", this.mapPicking && !this.part("tools").hidden);
     this.renderRoomMarkers();
     this.renderObjectMarkers();
+    this.renderMapObjectLayers();
     this.renderZones();
     this.updateTargetButton();
   }
@@ -903,6 +911,47 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       button.style.top = `${marker.y * 100}%`;
       return button;
     })));
+  }
+
+  renderMapObjectLayers() {
+    const img = this.part("map");
+    const layer = this.part("map-objects");
+    const attrs = this.currentMap ?? {};
+    const namespace = "http://www.w3.org/2000/svg";
+    const project = (point) => {
+      const result = projectPoint(this.calibration, point, "vacuum", "map");
+      const position = result && [result[0] / img.naturalWidth, result[1] / img.naturalHeight];
+      return position?.every((axis) => axis >= 0 && axis <= 1) ? position : null;
+    };
+    const rectangles = (value, className) => (Array.isArray(value) ? value : []).flatMap((row) => {
+      if (!Array.isArray(row) || row.length < 4 || !row.slice(0, 4).every(Number.isSafeInteger)) return [];
+      const points = [[row[0], row[1]], [row[2], row[1]], [row[2], row[3]], [row[0], row[3]]].map(project);
+      return points.every(Boolean) ? [{ className, points }] : [];
+    });
+    const wallLines = (value, className) => (Array.isArray(value) ? value : []).flatMap((row) => {
+      if (!Array.isArray(row) || row.length < 4 || !row.slice(0, 4).every(Number.isSafeInteger)) return [];
+      const start = project(row.slice(0, 2)); const end = project(row.slice(2, 4));
+      return start && end ? [{ className, start, end }] : [];
+    });
+    const polygons = [...rectangles(attrs.no_go_areas, "restricted"), ...rectangles(attrs.no_mopping_areas, "restricted"),
+      ...rectangles(attrs.carpets, "carpet")];
+    const lines = [...wallLines(attrs.virtual_walls, "wall"), ...wallLines(attrs.virtual_thresholds, "threshold"),
+      ...wallLines(attrs.passable_thresholds, "threshold"), ...wallLines(attrs.impassable_thresholds, "threshold")];
+    layer.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || (!polygons.length && !lines.length);
+    if (layer.hidden) return;
+    this.section("map-objects", [polygons, lines], (node) => {
+      const svg = document.createElementNS(namespace, "svg");
+      svg.setAttribute("viewBox", "0 0 100 100"); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("aria-hidden", "true");
+      for (const { className, points } of polygons) {
+        const shape = document.createElementNS(namespace, "polygon");
+        shape.setAttribute("class", className); shape.setAttribute("points", points.map(([x, y]) => `${x * 100},${y * 100}`).join(" ")); svg.append(shape);
+      }
+      for (const { className, start, end } of lines) {
+        const line = document.createElementNS(namespace, "line");
+        line.setAttribute("class", className); line.setAttribute("x1", start[0] * 100); line.setAttribute("y1", start[1] * 100); line.setAttribute("x2", end[0] * 100); line.setAttribute("y2", end[1] * 100); svg.append(line);
+      }
+      node.replaceChildren(svg);
+    });
   }
 
   renderObjectEditor() {
