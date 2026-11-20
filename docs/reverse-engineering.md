@@ -109,6 +109,10 @@ subsequent implementation changes.
    parity: graphical wall/room/object mutation, schedule creation/editing,
    haptic feedback, keyboard mapping and model-specific continuous steering
    remain unverified or intentionally withheld.
+   The map editor slice now also projects valid obstacle, carpet and furniture
+   coordinates as selectable markers. Obstacle selection can call the verified
+   ignore action; carpet/furniture selection remains informational until their
+   model-specific write schemas are confirmed.
 
 ### New REA evidence
 

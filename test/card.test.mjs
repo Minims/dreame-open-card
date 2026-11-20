@@ -120,6 +120,19 @@ test("summarizes only map object collections supplied by the camera", async () =
   ]);
 });
 
+test("projects selectable map objects from point and rectangle contracts", async () => {
+  const { mapObjectMarkers } = await import("../dreame-open-card.js");
+  const calibration = [{ map: { x: 0, y: 0 }, vacuum: { x: 0, y: 0 } }, { map: { x: 100, y: 0 }, vacuum: { x: 100, y: 0 } }, { map: { x: 0, y: 100 }, vacuum: { x: 0, y: 100 } }];
+  const result = mapObjectMarkers({ obstacles: { a: { x: 20, y: 30, type: "obstacle" } }, carpets: [[10, 20, 50, 60]], furniture: [{ x0: 60, y0: 10, x1: 90, y1: 30 }] }, calibration, 100, 100);
+  assert.deepEqual(result.map(({ kind, x, y }) => [kind, x, y]), [["obstacles", 0.2, 0.3], ["carpets", 0.3, 0.4], ["furniture", 0.75, 0.2]]);
+});
+
+test("ignores map objects without safe coordinates", async () => {
+  const { mapObjectMarkers } = await import("../dreame-open-card.js");
+  const calibration = [{ map: { x: 0, y: 0 }, vacuum: { x: 0, y: 0 } }, { map: { x: 100, y: 0 }, vacuum: { x: 100, y: 0 } }, { map: { x: 0, y: 100 }, vacuum: { x: 0, y: 100 } }];
+  assert.deepEqual(mapObjectMarkers({ obstacles: { bad: { x: "20", y: 30 } }, carpets: [[0, 0, 0, 10]] }, calibration, 100, 100), []);
+});
+
 test("reads schedule and shortcut collections without inventing entries", async () => {
   const { scheduleEntries, shortcutEntries } = await import("../dreame-open-card.js");
   assert.deepEqual(scheduleEntries({ morning: { enabled: true, time: "07:30", days: [1, 3] }, bad: "ignored" }),
