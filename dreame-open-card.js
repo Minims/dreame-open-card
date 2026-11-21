@@ -393,21 +393,65 @@ function paintMapPaths(ctx, { path, left, top, step }, dark) {
 function paintMapPositions(ctx, scene) {
   const { left, top, step, width, height } = scene;
   const transform = ctx.getTransform();
-  const radius = Math.min(ctx.canvas.width, ctx.canvas.height) * .024;
+  const radius = Math.min(ctx.canvas.width, ctx.canvas.height) * .033;
   ctx.resetTransform();
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = radius / 4;
-  for (const [position, color] of [[scene.dock, "#007d68"], [scene.robot, "#007d9d"]]) {
+  for (const [position, paint] of [[scene.dock, paintDockIcon], [scene.robot, paintRobotIcon]]) {
     if (!Array.isArray(position) || !position.slice(0, 2).every(Number.isFinite) || position.length < 2) continue;
     const x = (position[0] - left) / step, y = (position[1] - top) / step;
     if (x < 0 || x >= width || y < 0 || y >= height) continue;
     const screen = transform.transformPoint({ x, y });
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(screen.x, screen.y, radius, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.stroke();
+    ctx.save();
+    ctx.translate(screen.x, screen.y);
+    ctx.scale(radius, radius);
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = .16;
+    paint(ctx, mapHeading(transform, position[2]));
+    ctx.restore();
   }
+}
+
+function mapHeading({ a, b, c, d }, heading) {
+  if (!Number.isFinite(heading) || heading === 32767) return null;
+  // Dreame measures from +X in robot coordinates; the calibration can rotate or flip the axes.
+  const angle = (heading % 360) * Math.PI / 180;
+  const x = Math.cos(angle), y = Math.sin(angle);
+  return Math.atan2(b * x + d * y, a * x + c * y);
+}
+
+function paintDockIcon(ctx) {
+  ctx.beginPath();
+  ctx.roundRect(-.65, -.82, 1.3, 1.64, .24);
+  ctx.fillStyle = "#007d68";
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(.08, -.6);
+  ctx.lineTo(-.34, .1);
+  ctx.lineTo(-.05, .1);
+  ctx.lineTo(-.14, .56);
+  ctx.lineTo(.34, -.12);
+  ctx.lineTo(.05, -.12);
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+}
+
+function paintRobotIcon(ctx, heading) {
+  ctx.beginPath();
+  ctx.arc(0, 0, .94, 0, 2 * Math.PI);
+  ctx.fillStyle = "#007d9d";
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  if (heading === null) ctx.arc(0, 0, .22, 0, 2 * Math.PI);
+  else {
+    ctx.rotate(heading);
+    ctx.moveTo(.75, 0);
+    ctx.lineTo(-.35, -.36);
+    ctx.lineTo(-.13, 0);
+    ctx.lineTo(-.35, .36);
+  }
+  ctx.fillStyle = "#fff";
+  ctx.fill();
 }
 
 export function deviceEntities(hass, config) {

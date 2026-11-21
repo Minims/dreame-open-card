@@ -89,6 +89,14 @@
       const bed = canvas.getContext("2d").getImageData(282, 87, 1, 1).data;
       require(bed[0] > (dark ? 135 : 210) && bed[1] > (dark ? 135 : 210), "Known furniture does not render a light silhouette");
       require(el("map-objects").querySelector("line.door"), "Physical door is missing from the structured map");
+      const isWhite = (x, y) => canvas.getContext("2d").getImageData(x, y, 1, 1).data
+        .slice(0, 3).every(channel => channel > 230);
+      require(isWhite(301, 165) && !isWhite(307, 170), "Robot pictogram does not point north for heading 90°");
+      require(isWhite(76, 77) && !isWhite(69, 71), "Dock pictogram does not have a distinct charging symbol");
+      update(42, 7, { calibration_points: calibration.map(({ vacuum, map }) =>
+        ({ vacuum, map: { x: 345 - map.y, y: map.x - 55 } })) });
+      require(isWhite(179, 246) && !isWhite(175, 240), "Robot heading did not rotate with the calibration");
+      update();
       const paintAtEdge = () => canvas.getContext("2d").getImageData(45, 142, 1, 1).data.join();
       const beforeCalibration = paintAtEdge();
       update(42, 7, { calibration_points: calibration.map(point => ({ ...point, map: { ...point.map, x: point.map.x + 20 } })) });
@@ -163,6 +171,10 @@
       require(canvas.hidden && getComputedStyle(el("map")).opacity === "1", "Failed to show camera fallback after floor change");
       require(el("map-objects").hidden || !el("map-objects").querySelector("line.door"), "Stale structured door is visible in camera fallback");
       require(el("map-objects").hidden || !el("map-objects").querySelector(".draft"), "Stale draft is still visible");
+      update(44, 7);
+      await waitFor(() => !canvas.hidden);
+      require(isWhite(301, 170) && !isWhite(301, 165) && !isWhite(307, 170),
+        "Unknown heading should show a robot without a directional arrow");
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
       output.value = `FAIL: ${error.message}`;
