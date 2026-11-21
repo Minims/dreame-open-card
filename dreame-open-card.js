@@ -254,7 +254,7 @@ export function decodeMapScene(raw, { floor, mapId, frame } = {}) {
   }
   if (!pixels.some(Boolean)) return null;
   return { left, top, width, height, step, pixels, layers, hiddenRooms, materials: raw.floor_material,
-    robot: raw.robot_position, dock: raw.charger_position, path: raw.path };
+    robot: raw.robot_position, dock: raw.charger_position, path: raw.path, doors: raw.doors, furniture: raw.furnitures };
 }
 
 const roomPixel = (type) => type > 100 && type < 200 ? type - 100 : type;
@@ -272,6 +272,10 @@ const ROOM_COLORS = {
   light: ["#a4c2f4", "#aed59b", "#91cce7", "#f4d877", "#b3a4da", "#efb997"],
   dark: ["#42638c", "#4e7248", "#366c81", "#8a753c", "#675686", "#8f6247"],
 };
+
+function roomColor(id, palette) {
+  return palette[(id - 1) % palette.length];
+}
 
 function floorPattern(ctx, material, dark) {
   const tile = document.createElement("canvas");
@@ -306,7 +310,7 @@ function paintMapCells(ctx, scene, dark) {
     if (type === 512) ctx.globalCompositeOperation = "source-atop";
     const wall = [251, 255].includes(type) || (type > 100 && type < 200);
     ctx.fillStyle = type === 512 ? "#b891574d" : wall ? (dark ? "#96a6bb" : "#47566a")
-      : isRoomFloor(type) ? palette[(room + palette.length - 1) % palette.length] : (dark ? "#46515e" : "#cfdae5");
+      : isRoomFloor(type) ? roomColor(room, palette) : (dark ? "#46515e" : "#cfdae5");
     fillMapRuns(ctx, runs);
     const material = scene.materials?.[type];
     if (!isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
@@ -331,9 +335,46 @@ function paintScene(canvas, scene, calibration, image) {
   ctx.setTransform(right[0] - origin[0], right[1] - origin[1], up[0] - origin[0], up[1] - origin[1], ...origin);
   const dark = canvas.closest(".body").classList.contains("scheme-dreame-dark");
   paintMapCells(ctx, scene, dark);
+  paintMapFurniture(ctx, scene, dark);
   paintMapPaths(ctx, scene, dark);
   paintMapPositions(ctx, scene);
   return true;
+}
+
+function paintMapFurniture(ctx, scene, dark) {
+  if (!Array.isArray(scene.furniture)) return;
+  for (const row of scene.furniture) {
+    if (!Array.isArray(row)) continue;
+    const [x, y, width, height, type, , angle = 0, , room] = row;
+    if (![x, y, width, height, angle].every(Number.isFinite) || width <= 0 || height <= 0
+      || width > scene.width * scene.step || height > scene.height * scene.step || scene.hiddenRooms.has(room)) continue;
+    if (![1, 2, 3, 4, 5, 6, 8, 26].includes(type)) continue;
+    const col = (x - scene.left) / scene.step, line = (y - scene.top) / scene.step;
+    if (col < 0 || col >= scene.width || line < 0 || line >= scene.height) continue;
+    ctx.save();
+    ctx.translate(col, line);
+    ctx.scale(width / scene.step, height / scene.step);
+    ctx.rotate(-(angle % 360) * Math.PI / 180);
+    paintFurnitureShape(ctx, type, dark);
+    ctx.restore();
+  }
+}
+
+// shortcut: use silhouettes for supported furniture families until exact independent artwork is available.
+function paintFurnitureShape(ctx, type, dark) {
+  ctx.fillStyle = dark ? "#9eabb7" : "#eff3ee";
+  ctx.beginPath();
+  ctx.roundRect(-.5, -.5, 1, 1, .08);
+  ctx.fill();
+  ctx.fillStyle = dark ? "#677787" : "#ccd9d8";
+  if (type === 1 || type === 2) {
+    ctx.fillRect(-.37, .17, type === 2 ? .34 : .74, .23);
+    if (type === 2) ctx.fillRect(.03, .17, .34, .23);
+  } else if (type <= 5) {
+    ctx.fillRect(-.5, .29, 1, .16);
+    ctx.fillRect(-.47, -.36, .13, .65);
+    ctx.fillRect(.34, -.36, .13, .65);
+  } else ctx.fillRect(-.38, -.36, .76, .72);
 }
 
 function paintMapPaths(ctx, { path, left, top, step }, dark) {
@@ -821,6 +862,18 @@ const TEMPLATE = `
     min-height:32px; max-width:85%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
   #room-markers button[aria-pressed="true"] { background:#007d9d; z-index:1; }
   #room-markers button[data-order]::before { content:attr(data-order) " · "; }
+  #room-markers :is(.room-icon, .room-order) { display:none; }
+  .structured #room-markers button { display:flex; align-items:center; gap:4px; overflow:visible;
+    background:var(--room-color); color:#162b40; border:0; padding:4px 9px; font-size:12px; font-weight:600; }
+  .structured #room-markers .room-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .structured #room-markers .room-icon { display:block; flex:none; --mdc-icon-size:15px; width:15px; height:15px; }
+  .structured #room-markers button[aria-pressed="true"] { background:#fff; color:#162b40; }
+  .structured #room-markers button[data-order]::before { content:none; }
+  .structured #room-markers button[data-order]::after { content:""; position:absolute; bottom:-4px; left:calc(50% - 4px);
+    width:8px; height:8px; background:#fff; transform:rotate(45deg); }
+  .structured #room-markers .room-order { display:grid; place-items:center; position:absolute; bottom:calc(100% + 4px);
+    left:50%; transform:translateX(-50%); min-width:26px; height:26px; box-sizing:border-box; padding:0 4px;
+    border:2px solid white; border-radius:999px; background:var(--room-color); }
   #object-markers { position:absolute; inset:0; pointer-events:none; }
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
@@ -829,6 +882,8 @@ const TEMPLATE = `
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
   #map-objects .wall { stroke:#0b8fe3; stroke-width:4; }
   #map-objects .threshold { stroke:#8c6b2f; stroke-width:3; stroke-dasharray:5 3; }
+  #map-objects .door { stroke:#b65b52; stroke-width:2; stroke-linecap:round; }
+  .scheme-dreame-dark #map-objects .door { stroke:#f0a496; }
   #map-objects .restricted { fill:#d9464630; stroke:#d94646; stroke-width:2; }
   #map-objects .draft { stroke-dasharray:5 3; }
   #map-objects .carpet { fill:#f4cf4d30; stroke:#d8a600; stroke-width:2; }
@@ -1090,6 +1145,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     for (const marker of this.part("room-markers").children) {
       const order = ids.indexOf(Number(marker.dataset.room)) + 1;
       marker.setAttribute("aria-pressed", String(order > 0));
+      const badge = marker.querySelector(".room-order");
+      badge.hidden = !order;
+      badge.textContent = order || "";
       if (order) marker.dataset.order = order;
       else delete marker.dataset.order;
     }
@@ -1102,15 +1160,22 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     target.hidden = this.mode !== "room" || !this.mapPicking || !img.complete || !img.naturalWidth;
     if (target.hidden) return;
     const markers = this.markerRooms.flatMap(([id, room, label]) => {
-      // shortcut: use labelled bounds centers rather than hit regions until a room mask is available.
+      // shortcut: anchor badges to the bounds center until segment label coordinates are available.
       const position = roomMarkerPosition(this.calibration, room, img.naturalWidth, img.naturalHeight);
-      return position ? [[id, label, ...position]] : [];
+      const symbol = typeof room.icon === "string" && /^mdi:[a-z0-9-]+$/.test(room.icon) ? room.icon.slice(4) : "floor-plan";
+      return position ? [[id, label, symbol, ...position]] : [];
     });
-    this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, x, y]) => {
-      const button = this.button(label, () => this.toggleRoom(id, !this.roomSelection.has(id)));
+    this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, symbol, x, y]) => {
+      const button = this.button(null, () => this.toggleRoom(id, !this.roomSelection.has(id)));
+      button.setAttribute("aria-label", label);
+      const roomIcon = icon(symbol);
+      roomIcon.className = "room-icon";
+      button.append(roomIcon, element("span", label, { class: "room-label" }),
+        element("span", null, { class: "room-order", "aria-hidden": "true" }));
       button.dataset.room = id;
       button.style.left = `${x * 100}%`;
       button.style.top = `${y * 100}%`;
+      button.style.setProperty("--room-color", roomColor(id, ROOM_COLORS.light));
       return button;
     })));
     this.syncRoomSelection();
@@ -1165,7 +1230,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       polygons.push(...rectangles([draft], "restricted draft"));
     }
     const lines = [...wallLines(attrs.virtual_walls, "wall"), ...wallLines(attrs.virtual_thresholds, "threshold"),
-      ...wallLines(attrs.passable_thresholds, "threshold"), ...wallLines(attrs.impassable_thresholds, "threshold")];
+      ...wallLines(attrs.passable_thresholds, "threshold"), ...wallLines(attrs.impassable_thresholds, "threshold"),
+      ...wallLines(this.structuredVisible ? this.mapScene.doors : null, "door")];
     layer.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || (!polygons.length && !lines.length);
     if (layer.hidden) return;
     this.section("map-objects", [polygons, lines], (node) => {
@@ -1505,6 +1571,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const layer = this.part("map-layer");
     const paintKey = JSON.stringify([this.config.color_scheme, this.calibration, img.naturalWidth, img.naturalHeight]);
     const scene = this.mapPicking && img.complete ? this.mapScene : null;
+    const previous = this.paintedScene;
     this.structuredVisible = Boolean(scene && ((!canvas.hidden && this.paintedScene === scene && this.paintedKey === paintKey)
       || paintScene(canvas, scene, this.calibration, img)));
     this.paintedScene = this.structuredVisible ? scene : null;
@@ -1512,6 +1579,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     canvas.hidden = !this.structuredVisible;
     layer.classList.toggle("structured", this.structuredVisible);
     layer.classList.toggle("room-picking", this.structuredVisible && this.mode === "room");
+    if (this.paintedScene !== previous) this.renderMapObjectLayers();
   }
 
   update() {

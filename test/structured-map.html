@@ -37,8 +37,8 @@
         [camera]: { state: "idle", attributes: { saved_map_id: floor, map_id: floor * 10 + 1, frame_id: frame,
           entity_picture: `/api/camera_proxy/${camera}?v=${frame}`, calibration_points: calibration,
           virtual_walls: [[450, 250, 450, 650]], no_go_areas: [[200, 300, 300, 400]], no_mopping_areas: [],
-          rooms: { 1: { name: "Living room", x0: 150, x1: 400, y0: 250, y1: 650 },
-            2: { name: "Kitchen", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
+          rooms: { 1: { name: "Living room", icon: "mdi:sofa-outline", x0: 150, x1: 400, y0: 250, y1: 650 },
+            2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
       },
       services: {
         vacuum: { start: {}, return_to_base: {} },
@@ -86,13 +86,29 @@
       const texture = canvas.getContext("2d").getImageData(201, 142, 1, 1).data;
       const tile = canvas.getContext("2d").getImageData(212, 142, 1, 1).data;
       require(texture.some((channel, i) => Math.abs(channel - tile[i]) > 6), "Tile material does not render its seam");
+      const bed = canvas.getContext("2d").getImageData(282, 87, 1, 1).data;
+      require(bed[0] > (dark ? 135 : 210) && bed[1] > (dark ? 135 : 210), "Known furniture does not render a light silhouette");
+      require(el("map-objects").querySelector("line.door"), "Physical door is missing from the structured map");
       const paintAtEdge = () => canvas.getContext("2d").getImageData(45, 142, 1, 1).data.join();
       const beforeCalibration = paintAtEdge();
       update(42, 7, { calibration_points: calibration.map(point => ({ ...point, map: { ...point.map, x: point.map.x + 20 } })) });
       require(paintAtEdge() !== beforeCalibration, "Canvas ignores a calibration-only update");
       update();
       button("modes", "Rooms").click();
+      const living = el("room-markers").querySelector('[data-room="1"]');
+      const kitchen = el("room-markers").querySelector('[data-room="2"]');
+      require(kitchen.getAttribute("aria-label") === "Kitchen"
+        && kitchen.querySelector('ha-icon[icon="mdi:stove"]'), "Room badge is missing its accessible name or integration icon");
+      require(getComputedStyle(living).backgroundColor !== getComputedStyle(kitchen).backgroundColor,
+        "Unselected room badges do not have distinct room colors");
       clickAt(290, 100);
+      require(kitchen.getAttribute("aria-pressed") === "true" && kitchen.querySelector(".room-order").textContent === "1",
+        "Selected room badge does not display its selection order");
+      living.focus();
+      require(root.activeElement === living, "Room badge cannot receive keyboard focus");
+      living.click();
+      require(living.querySelector(".room-order").textContent === "2", "Second selected badge has the wrong order");
+      living.click();
       el("target-task").click();
       require(calls.at(-1)?.payload.segments?.[0] === 2, "Pixel selection did not emit room 2");
 
@@ -145,6 +161,7 @@
       require(calls.length === beforeStaleClick, "Stale floor can still send an edit");
       await el("map").decode();
       require(canvas.hidden && getComputedStyle(el("map")).opacity === "1", "Failed to show camera fallback after floor change");
+      require(el("map-objects").hidden || !el("map-objects").querySelector("line.door"), "Stale structured door is visible in camera fallback");
       require(el("map-objects").hidden || !el("map-objects").querySelector(".draft"), "Stale draft is still visible");
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
