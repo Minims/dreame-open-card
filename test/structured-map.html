@@ -88,6 +88,12 @@
       require(texture.some((channel, i) => Math.abs(channel - tile[i]) > 6), "Tile material does not render its seam");
       const bed = canvas.getContext("2d").getImageData(282, 87, 1, 1).data;
       require(bed[0] > (dark ? 135 : 210) && bed[1] > (dark ? 135 : 210), "Known furniture does not render a light silhouette");
+      const pixel = (x, y) => canvas.getContext("2d").getImageData(x, y, 1, 1).data;
+      const matchesRoom = (x, y) => pixel(x, y).every((channel, i) => Math.abs(channel - expected[i]) <= 2);
+      require(Math.abs(pixel(245, 191)[0] - (dark ? 103 : 204)) <= 2
+        && pixel(258, 191)[0] > pixel(245, 191)[0] + 20, "Washing machine is missing its porthole");
+      require(pixel(90, 159)[0] > (dark ? 135 : 210) && matchesRoom(89, 145), "Round table is missing its curved footprint");
+      require(matchesRoom(142, 172) && matchesRoom(133, 205), "Unknown furniture or furniture in a hidden room was painted");
       require(el("map-objects").querySelector("line.door"), "Physical door is missing from the structured map");
       const isWhite = (x, y) => canvas.getContext("2d").getImageData(x, y, 1, 1).data
         .slice(0, 3).every(channel => channel > 230);
@@ -109,14 +115,22 @@
         && kitchen.querySelector('ha-icon[icon="mdi:stove"]'), "Room badge is missing its accessible name or integration icon");
       require(getComputedStyle(living).backgroundColor !== getComputedStyle(kitchen).backgroundColor,
         "Unselected room badges do not have distinct room colors");
+      const checkmark = kitchen.querySelector(".room-check");
+      require(checkmark?.textContent === "✓" && getComputedStyle(checkmark).display === "none",
+        "Unselected room has no checkmark state");
       clickAt(290, 100);
       require(kitchen.getAttribute("aria-pressed") === "true" && kitchen.querySelector(".room-order").textContent === "1",
         "Selected room badge does not display its selection order");
+      require(getComputedStyle(checkmark).display !== "none", "Selected room is missing its visible checkmark");
       living.focus();
       require(root.activeElement === living, "Room badge cannot receive keyboard focus");
       living.click();
       require(living.querySelector(".room-order").textContent === "2", "Second selected badge has the wrong order");
+      kitchen.click();
+      require(living.querySelector(".room-order").textContent === "1" && getComputedStyle(checkmark).display === "none",
+        "Deselecting the first room did not clear its checkmark and renumber the next room");
       living.click();
+      kitchen.click();
       el("target-task").click();
       require(calls.at(-1)?.payload.segments?.[0] === 2, "Pixel selection did not emit room 2");
 

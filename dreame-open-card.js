@@ -341,6 +341,26 @@ function paintScene(canvas, scene, calibration, image) {
   return true;
 }
 
+const furnitureOval = (x, y, width, height) => [x, y, width, height, "oval"];
+const furnitureBox = [[-.5, -.5, 1, 1]];
+const FURNITURE_ART = new Map([
+  [[1], furnitureBox, [[-.37, .17, .74, .23]]],
+  [[2], furnitureBox, [[-.37, .17, .34, .23], [.03, .17, .34, .23]]],
+  [[3, 4, 5, 29, 30], furnitureBox, [[-.5, .29, 1, .16], [-.47, -.36, .13, .65], [.34, -.36, .13, .65]]],
+  [[6, 8, 26], furnitureBox, [[-.38, -.36, .76, .72]]],
+  [[7, 18, 19, 20, 21], furnitureBox, [[-.4, -.38, .37, .76], [.03, -.38, .37, .76]]],
+  [[9, 13], [[-.48, .13, .96, .37], furnitureOval(-.42, -.5, .84, .78)], [furnitureOval(-.24, -.35, .48, .47)]],
+  [[10, 16], furnitureBox, [[-.34, -.34, .68, .68]]],
+  [[11, 12, 25], [furnitureOval(-.5, -.5, 1, 1)], [furnitureOval(-.36, -.36, .72, .72)]],
+  [[14], furnitureBox, [[-.46, .1, .92, .08], [.25, -.33, .07, .34]]],
+  [[15], furnitureBox, [furnitureOval(-.27, -.32, .54, .54), [-.38, .29, .76, .08]]],
+  [[17], furnitureBox, [[-.37, -.28, .74, .13]]],
+  [[22], [furnitureOval(-.5, -.5, 1, 1)], [furnitureOval(-.29, -.1, .45, .4), furnitureOval(-.12, -.29, .43, .46)]],
+  [[23], furnitureBox, [[-.36, -.38, .72, .76]]],
+  [[24], [[-.5, -.06, 1, .56], [-.5, -.5, .42, 1]], [[-.45, .31, .9, .13], [-.45, -.42, .13, .75]]],
+  [[31], [[-.5, -.06, 1, .56], [.08, -.5, .42, 1]], [[-.45, .31, .9, .13], [.32, -.42, .13, .75]]],
+].flatMap(([types, body, details]) => types.map(type => [type, { body, details }])));
+
 function paintMapFurniture(ctx, scene, dark) {
   if (!Array.isArray(scene.furniture)) return;
   for (const row of scene.furniture) {
@@ -348,33 +368,34 @@ function paintMapFurniture(ctx, scene, dark) {
     const [x, y, width, height, type, , angle = 0, , room] = row;
     if (![x, y, width, height, angle].every(Number.isFinite) || width <= 0 || height <= 0
       || width > scene.width * scene.step || height > scene.height * scene.step || scene.hiddenRooms.has(room)) continue;
-    if (![1, 2, 3, 4, 5, 6, 8, 26].includes(type)) continue;
+    const art = FURNITURE_ART.get(type);
+    if (!art) continue;
     const col = (x - scene.left) / scene.step, line = (y - scene.top) / scene.step;
     if (col < 0 || col >= scene.width || line < 0 || line >= scene.height) continue;
     ctx.save();
     ctx.translate(col, line);
     ctx.scale(width / scene.step, height / scene.step);
     ctx.rotate(-(angle % 360) * Math.PI / 180);
-    paintFurnitureShape(ctx, type, dark);
+    paintFurnitureShape(ctx, art, dark);
     ctx.restore();
   }
 }
 
 // shortcut: use silhouettes for supported furniture families until exact independent artwork is available.
-function paintFurnitureShape(ctx, type, dark) {
+function paintFurnitureShape(ctx, { body, details }, dark) {
   ctx.fillStyle = dark ? "#9eabb7" : "#eff3ee";
-  ctx.beginPath();
-  ctx.roundRect(-.5, -.5, 1, 1, .08);
-  ctx.fill();
+  paintFurnitureParts(ctx, body);
   ctx.fillStyle = dark ? "#677787" : "#ccd9d8";
-  if (type === 1 || type === 2) {
-    ctx.fillRect(-.37, .17, type === 2 ? .34 : .74, .23);
-    if (type === 2) ctx.fillRect(.03, .17, .34, .23);
-  } else if (type <= 5) {
-    ctx.fillRect(-.5, .29, 1, .16);
-    ctx.fillRect(-.47, -.36, .13, .65);
-    ctx.fillRect(.34, -.36, .13, .65);
-  } else ctx.fillRect(-.38, -.36, .76, .72);
+  paintFurnitureParts(ctx, details);
+}
+
+function paintFurnitureParts(ctx, parts) {
+  for (const [x, y, width, height, shape] of parts) {
+    ctx.beginPath();
+    if (shape === "oval") ctx.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, 2 * Math.PI);
+    else ctx.roundRect(x, y, width, height, Math.min(width, height, .16) / 2);
+    ctx.fill();
+  }
 }
 
 function paintMapPaths(ctx, { path, left, top, step }, dark) {
@@ -906,18 +927,21 @@ const TEMPLATE = `
     min-height:32px; max-width:85%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
   #room-markers button[aria-pressed="true"] { background:#007d9d; z-index:1; }
   #room-markers button[data-order]::before { content:attr(data-order) " · "; }
-  #room-markers :is(.room-icon, .room-order) { display:none; }
+  #room-markers :is(.room-icon, .room-order, .room-check) { display:none; }
   .structured #room-markers button { display:flex; align-items:center; gap:4px; overflow:visible;
     background:var(--room-color); color:#162b40; border:0; padding:4px 9px; font-size:12px; font-weight:600; }
   .structured #room-markers .room-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .structured #room-markers .room-icon { display:block; flex:none; --mdc-icon-size:15px; width:15px; height:15px; }
   .structured #room-markers button[aria-pressed="true"] { background:#fff; color:#162b40; }
+  .structured #room-markers button[aria-pressed="true"] .room-check { display:grid; place-items:center; flex:none;
+    width:16px; height:16px; border-radius:50%; background:var(--room-color); font-size:12px; line-height:1; }
   .structured #room-markers button[data-order]::before { content:none; }
   .structured #room-markers button[data-order]::after { content:""; position:absolute; bottom:-4px; left:calc(50% - 4px);
     width:8px; height:8px; background:#fff; transform:rotate(45deg); }
   .structured #room-markers .room-order { display:grid; place-items:center; position:absolute; bottom:calc(100% + 4px);
     left:50%; transform:translateX(-50%); min-width:26px; height:26px; box-sizing:border-box; padding:0 4px;
-    border:2px solid white; border-radius:999px; background:var(--room-color); }
+    border:2px solid white; border-radius:999px; background:var(--room-color);
+    font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
   #object-markers { position:absolute; inset:0; pointer-events:none; }
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
@@ -1214,7 +1238,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       button.setAttribute("aria-label", label);
       const roomIcon = icon(symbol);
       roomIcon.className = "room-icon";
-      button.append(roomIcon, element("span", label, { class: "room-label" }),
+      button.append(element("span", "✓", { class: "room-check", "aria-hidden": "true" }),
+        roomIcon, element("span", label, { class: "room-label" }),
         element("span", null, { class: "room-order", "aria-hidden": "true" }));
       button.dataset.room = id;
       button.style.left = `${x * 100}%`;
