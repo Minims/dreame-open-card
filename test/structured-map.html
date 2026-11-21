@@ -152,6 +152,34 @@
       require(el("editor-detail").hidden || !nextAdd || nextAdd.disabled, "Another edit can overwrite a write that is not visible yet");
       update(42, 7, { no_go_areas: edit.payload.zones });
 
+      el("editor-detail").open = true;
+      clickAt(88, 191);
+      require(el("map-objects").querySelector("polygon.selected-restriction"), "Tapping an existing restriction did not select it");
+      clickAt(97, 176);
+      clickAt(114, 204);
+      require(el("map-objects").querySelector("polygon.draft") && button("editor", "Apply map object").disabled,
+        "Resize is not previewed behind confirmation");
+      el("editor").querySelector("input").click();
+      button("editor", "Apply map object").click();
+      const resize = calls.at(-1)?.payload;
+      require(resize?.zones?.[0].every((coord, i) => Math.abs(coord - [271, 322, 309, 383][i]) <= 4)
+        && resize.zones[1].join() === edit.payload.zones[1].join() && resize.walls[0].join() === edit.payload.walls[0].join(),
+        "Resizing changed more than the selected area");
+      await new Promise(requestAnimationFrame);
+      update(42, 7, { no_go_areas: resize.zones });
+
+      button("editor", "No-go areas 1").click();
+      button("editor", "Remove area").click();
+      require(el("map-objects").querySelector("polygon.removal") && button("editor", "Apply map object").disabled,
+        "Removal did not show the target and require confirmation");
+      el("editor").querySelector("input").click();
+      button("editor", "Apply map object").click();
+      const removal = calls.at(-1)?.payload;
+      require(removal?.zones.length === 1 && removal.zones[0].join() === resize.zones[1].join()
+        && removal.walls[0].join() === resize.walls[0].join(), "Removing an area changed other restrictions");
+      await new Promise(requestAnimationFrame);
+      update(42, 7, { no_go_areas: removal.zones });
+
       button("shortcuts", "Run shortcut").click();
       require(calls.at(-1)?.payload.shortcut_id === 25, "Shortcut did not use its ID");
       require(!el("schedules").querySelector("button"), "Schedule incorrectly exposes a command");
@@ -164,9 +192,8 @@
       button("remote", "Move one step").click();
       require(calls.length === count + 1 && calls.at(-1).payload.rotation === 30, "Explicit step did not send one movement");
 
-      button("editor", "Add restricted area").click();
-      clickAt(250, 110);
-      clickAt(290, 150);
+      button("editor", "No-go areas 1").click();
+      button("editor", "Remove area").click();
       const stale = button("editor", "Apply map object");
       el("editor").querySelector("input").click();
       el("floors").querySelector("select").value = "8";
@@ -189,6 +216,20 @@
       await waitFor(() => !canvas.hidden);
       require(isWhite(301, 170) && !isWhite(301, 165) && !isWhite(307, 170),
         "Unknown heading should show a robot without a directional arrow");
+
+      card.style.maxWidth = "320px";
+      const longName = "Large dining and living room beside the south-facing windows";
+      const overlapping = { name: longName, x0: 150, x1: 400, y0: 250, y1: 650 };
+      update(44, 7, { rooms: { 1: overlapping, 2: { ...overlapping, name: "Corner room" } } });
+      button("modes", "Rooms").click();
+      const longBadge = el("room-markers").querySelector('[data-room="1"]');
+      const label = longBadge.querySelector(".room-label");
+      require(label.scrollWidth > label.clientWidth && longBadge.getAttribute("aria-label") === longName,
+        "A narrow card does not truncate long room labels while preserving their accessible names");
+      el("rooms").querySelector('input[value="1"]').click();
+      el("rooms").querySelector('input[value="2"]').click();
+      require([...el("room-markers").children].every(marker => marker.getAttribute("aria-pressed") === "true"),
+        "Overlapping map badges cannot both be selected from the room checklist");
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
       output.value = `FAIL: ${error.message}`;

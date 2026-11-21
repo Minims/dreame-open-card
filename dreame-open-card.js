@@ -72,6 +72,9 @@ const FRENCH = {
   "Rotation": "Rotation",
   "Disabled": "Désactivé",
   "Add restricted area": "Ajouter une zone interdite",
+  "Remove area": "Supprimer la zone",
+  "Confirm removal of the selected area.": "Confirmez la suppression de la zone sélectionnée.",
+  "Select two new corners to resize this area.": "Sélectionnez deux nouveaux coins pour redimensionner cette zone.",
   "Add no-mopping area": "Ajouter une zone sans serpillière",
   "Apply map object": "Appliquer l’objet de carte",
   "Edit floor": "Modifier l’étage",
@@ -626,6 +629,11 @@ export function restrictionSnapshot(map, activeFloor, cameraFloor) {
   return [...walls, ...zones, ...no_mops].every(Boolean) ? JSON.stringify({ floor: activeFloor, walls, zones, no_mops }) : null;
 }
 
+const RESTRICTION_LISTS = [
+  { field: "zones", attr: "no_go_areas", label: "No-go areas", add: "Add restricted area" },
+  { field: "no_mops", attr: "no_mopping_areas", label: "No-mopping areas", add: "Add no-mopping area" },
+];
+
 function lineCoordinates(line) {
   const coords = Array.isArray(line) ? line : [line?.x0, line?.y0, line?.x1, line?.y1];
   return coords.length === 4 && coords.every(Number.isSafeInteger) ? coords : null;
@@ -644,10 +652,20 @@ function rectangleCoordinates(area) {
 }
 
 export function appendRestriction(before, current, field, corners) {
+  return editRestriction(before, current, field, { corners });
+}
+
+export function editRestriction(before, current, field, { index = null, corners }) {
   if (!before || before !== current) throw new Error("The map changed. Select the area again.");
-  const { walls, zones, no_mops } = JSON.parse(current);
-  const restrictions = { walls, zones, no_mops };
-  restrictions[field] = appendMapRectangle(restrictions[field], corners[0], corners[1], field);
+  if (!["zones", "no_mops"].includes(field)) throw new Error("Unsupported rectangle list.");
+  const restrictions = JSON.parse(current);
+  const rows = restrictions[field];
+  if (index === null) restrictions[field] = appendMapRectangle(rows, corners?.[0], corners?.[1], field);
+  else {
+    if (!Number.isInteger(index) || index < 0 || index >= rows.length) throw new Error("The map changed. Select the area again.");
+    const replacement = corners === undefined ? [] : appendMapRectangle([], corners?.[0], corners?.[1], field);
+    rows.splice(index, 1, ...replacement);
+  }
   return mapEditPayload("set_restricted_zone", {
     walls: JSON.stringify(restrictions.walls), zones: JSON.stringify(restrictions.zones),
     no_mops: JSON.stringify(restrictions.no_mops), confirm: true,
@@ -954,6 +972,8 @@ const TEMPLATE = `
   .scheme-dreame-dark #map-objects .door { stroke:#f0a496; }
   #map-objects .restricted { fill:#d9464630; stroke:#d94646; stroke-width:2; }
   #map-objects .draft { stroke-dasharray:5 3; }
+  #map-objects .selected-restriction { stroke:#007d9d; stroke-width:3; }
+  #map-objects .removal { stroke:#c52031; stroke-dasharray:5 3; }
   #map-objects .carpet { fill:#f4cf4d30; stroke:#d8a600; stroke-width:2; }
   details { border-top:1px solid var(--divider-color,#aebcb5); padding:10px 0 0; }
   details > div, form { display:grid; gap:10px; margin-top:10px; }
@@ -1280,11 +1300,13 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const position = result && [result[0] / img.naturalWidth, result[1] / img.naturalHeight];
       return position?.every((axis) => axis >= 0 && axis <= 1) ? position : null;
     };
-    const rectangles = (value, className) => (Array.isArray(value) ? value : []).flatMap((area) => {
+    const rectangles = (value, className, field) => (Array.isArray(value) ? value : []).flatMap((area, index) => {
       const row = rectangleCoordinates(area);
       if (!row) return [];
       const points = [[row[0], row[1]], [row[2], row[1]], [row[2], row[3]], [row[0], row[3]]].map(project);
-      return points.every(Boolean) ? [{ className, points }] : [];
+      const selected = field === this.editPickMode && index === this.editIndex;
+      const style = selected ? `${className} selected-restriction${this.editRemove ? " removal" : ""}` : className;
+      return points.every(Boolean) ? [{ className: style, points }] : [];
     });
     const wallLines = (value, className) => (Array.isArray(value) ? value : []).flatMap((line) => {
       const row = lineCoordinates(Array.isArray(line) ? line.slice(0, 4) : line);
@@ -1292,8 +1314,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const start = project(row.slice(0, 2)); const end = project(row.slice(2, 4));
       return start && end ? [{ className, start, end }] : [];
     });
-    const polygons = [...rectangles(attrs.no_go_areas, "restricted"), ...rectangles(attrs.no_mopping_areas, "restricted"),
-      ...rectangles(attrs.carpets, "carpet")];
+    const polygons = RESTRICTION_LISTS.flatMap(({ field, attr }) => rectangles(attrs[attr], "restricted", field));
+    polygons.push(...rectangles(attrs.carpets, "carpet"));
     if (this.editPickMode && this.picks.length === 2) {
       const draft = mapArea(...this.picks.map(({ coords }) => coords));
       polygons.push(...rectangles([draft], "restricted draft"));
@@ -1320,11 +1342,12 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   renderObjectEditor() {
     const editor = this.part("editor");
-    const canRestricted = this.canEditRestrictions() && hasAction(this.ha, dreame("set_restricted_zone"));
+    const canRestricted = this.canEditRestrictions();
     const enabled = this.config.features?.editing !== false && (this.objectSelection || canRestricted);
     this.part("editor-detail").hidden = !enabled;
     if (!enabled) return;
-    const signature = JSON.stringify([this.objectSelection, Boolean(canRestricted), this.editPickMode, this.picks]);
+    const signature = JSON.stringify([this.objectSelection, canRestricted, this.restrictions,
+      this.editPickMode, this.editIndex, this.editRemove, this.picks]);
     if (editor.dataset.signature === signature) return;
     editor.dataset.signature = signature;
     editor.replaceChildren();
@@ -1332,36 +1355,68 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       editor.append(element("p", `${this.t("Map objects")}: ${this.objectSelection.label}`));
     }
     if (!canRestricted) return;
+    const snapshot = this.restrictions;
+    editor.append(this.restrictionControls(snapshot));
+    if (this.editPickMode && (this.editRemove || this.picks.length === 2)) this.renderRestrictionConfirmation(editor);
+  }
+
+  restrictionControls(snapshot) {
     const actions = element("div", null, { class: "row" });
-    for (const [field, label] of [["zones", "Add restricted area"], ["no_mops", "Add no-mopping area"]]) {
-      actions.append(this.button(this.t(label), () => {
-        this.editPickMode = field;
-        this.editSnapshot = this.restrictions;
+    const lists = JSON.parse(snapshot);
+    for (const { field, label, add } of RESTRICTION_LISTS) {
+      actions.append(this.button(this.t(add), () => this.startRestrictionEdit(field, null, snapshot)));
+      lists[field].forEach((_, index) => {
+        const button = this.button(`${this.t(label)} ${index + 1}`, () => this.startRestrictionEdit(field, index, snapshot));
+        button.setAttribute("aria-pressed", String(field === this.editPickMode && index === this.editIndex));
+        actions.append(button);
+      });
+    }
+    if (this.editPickMode && this.editIndex != null && !this.editRemove) {
+      actions.append(this.button(this.t("Remove area"), () => {
+        this.editRemove = true;
         this.clearPicks();
         this.renderObjectEditor();
-        this.status("Choose two opposite corners for each zone.");
+        this.status("Confirm removal of the selected area.");
       }));
     }
     if (this.editPickMode) actions.append(this.button(this.t("Clear"), () => this.cancelRestrictionEdit()));
-    editor.append(actions);
-    if (this.editPickMode && this.picks.length === 2) this.renderRestrictionConfirmation(editor);
+    return actions;
+  }
+
+  startRestrictionEdit(field, index, snapshot) {
+    if (!this.canEditRestrictions(snapshot)) return;
+    this.editPickMode = field;
+    this.editIndex = index;
+    this.editRemove = false;
+    this.editSnapshot = snapshot;
+    this.part("editor-detail").open = true;
+    this.clearPicks();
+    this.renderObjectEditor();
+    this.status(index === null ? "Choose two opposite corners for each zone." : "Select two new corners to resize this area.");
   }
 
   cancelRestrictionEdit() {
-    this.editPickMode = null;
-    this.editSnapshot = null;
+    this.resetRestrictionDraft();
     this.clearPicks();
     this.renderObjectEditor();
   }
 
+  resetRestrictionDraft() {
+    this.editPickMode = null;
+    this.editIndex = null;
+    this.editRemove = false;
+    this.editSnapshot = null;
+  }
+
   renderRestrictionConfirmation(editor) {
     const snapshot = this.editSnapshot;
+    const field = this.editPickMode, index = this.editIndex;
+    const corners = this.editRemove ? undefined : this.picks.map(({ coords }) => coords);
     const confirm = element("input", null, { type: "checkbox" });
     const apply = this.button(this.t("Apply map object"), async () => {
-      if (!confirm.checked || snapshot !== this.editSnapshot || !this.canEditRestrictions(snapshot)) return;
+      if (!confirm.checked || !apply.isConnected || snapshot !== this.editSnapshot || !this.canEditRestrictions(snapshot)) return;
       try {
-        const corners = this.picks.map(({ coords }) => coords);
-        const payload = appendRestriction(snapshot, this.restrictions, this.editPickMode, corners);
+        const payload = editRestriction(snapshot, this.restrictions, field, { index, corners });
         await this.writeRestrictions(snapshot, payload);
       } catch (error) { this.status(error.message, true); }
     }, true);
@@ -1370,7 +1425,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   canEditRestrictions(snapshot = this.restrictions) {
-    return Boolean(snapshot && snapshot === this.restrictions && this.mapPicking && !this.pendingFloor && !this.pendingRestriction);
+    return Boolean(snapshot && snapshot === this.restrictions && this.mapPicking && !this.pendingFloor && !this.pendingRestriction
+      && this.config.features?.editing !== false && hasAction(this.ha, dreame("set_restricted_zone")));
   }
 
   async writeRestrictions(snapshot, payload) {
@@ -1693,13 +1749,12 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.restrictions = this.mapPicking && !attrs.has_temporary_map && restrictionSnapshot(map, activeMapId, cameraMapId);
     const pending = this.pendingRestriction;
     if (pending?.finished && pending.expected && pending.expected === this.restrictions) this.pendingRestriction = null;
-    const scope = JSON.stringify([entity, map_camera, activeMapId, attrs.selected_map, cameraMapId, this.calibration, available]);
+    const scope = JSON.stringify([entity, map_camera, activeMapId, attrs.selected_map, cameraMapId, map.map_id, this.calibration, available]);
     if (scope !== this.scope) {
       this.scope = scope;
       this.roomSelection.clear();
       this.objectSelection = null;
-      this.editPickMode = null;
-      this.editSnapshot = null;
+      this.resetRestrictionDraft();
       this.clearPicks();
     }
 
@@ -1883,11 +1938,15 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   selectedTool() { return TOOLS.find(([key]) => key === this.toolSelect?.value); }
 
   pickOnMap(event) {
+    const editor = this.part("editor-detail");
+    if (this.editPickMode && !editor.open) this.cancelRestrictionEdit();
     if (this.editPickMode) {
       const pick = this.mapPointer(event);
-      if (pick) this.addPick(pick.coords, pick.pin);
+      if (pick && !this.editRemove) this.addPick(pick.coords, pick.pin);
       return;
     }
+    if (editor.open && !editor.hidden && this.canEditRestrictions()
+      && this.selectRestrictionAt(this.mapPointer(event))) return;
     if (this.mode === "room" && this.structuredVisible) {
       const pick = this.mapPointer(event);
       if (!pick) return;
@@ -1899,6 +1958,21 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const pick = this.mapPointer(event);
     if (!pick) return;
     this.addPick(pick.coords, pick.pin);
+  }
+
+  selectRestrictionAt(pick) {
+    if (!pick) return false;
+    const snapshot = this.restrictions;
+    const lists = JSON.parse(snapshot);
+    const [x, y] = pick.coords;
+    // Prefer the last painted restriction; the editor list can select any overlapping area.
+    for (const { field } of [...RESTRICTION_LISTS].reverse()) {
+      const index = lists[field].findLastIndex(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1);
+      if (index < 0) continue;
+      this.startRestrictionEdit(field, index, snapshot);
+      return true;
+    }
+    return false;
   }
 
   mapPointer(event) {
@@ -1925,6 +1999,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   addPick(coords, pin) {
     if (this.editPickMode) {
       if (this.picks.length >= 2) this.picks = [];
+      if (this.picks.length === 1 && !mapArea(this.picks[0].coords, coords)) {
+        this.status("Choose two corners that enclose an area.", true);
+        return;
+      }
       this.picks.push({ coords, pin });
       this.showPicks();
       this.renderObjectEditor();

@@ -59,6 +59,18 @@ test("graphical restricted-area edits preserve all three lists and reject stale 
   assert.equal(restrictionSnapshot({ ...attrs, no_go_areas: [[0, 0, 3, 1, 2, 4, -1, 3]] }, 7, 7), null);
 });
 
+test("resizing or deleting a restriction changes only the selected rectangle", async () => {
+  const { restrictionSnapshot, editRestriction } = await import("../dreame-open-card.js");
+  const map = { virtual_walls: [[0, 0, 3, 3]], no_go_areas: [[1, 2, 3, 4], [6, 7, 8, 9]], no_mopping_areas: [[1, 1, 2, 2]] };
+  const snapshot = restrictionSnapshot(map, 7, 7);
+  assert.deepEqual(editRestriction(snapshot, snapshot, "zones", { index: 0, corners: [[5, 5], [2, 2]] }),
+    { walls: map.virtual_walls, zones: [[2, 2, 5, 5], [6, 7, 8, 9]], no_mops: [[1, 1, 2, 2]] });
+  assert.deepEqual(editRestriction(snapshot, snapshot, "no_mops", { index: 0 }),
+    { walls: map.virtual_walls, zones: map.no_go_areas, no_mops: [] });
+  assert.throws(() => editRestriction(snapshot, snapshot, "zones", { index: 2 }), /changed/);
+  assert.throws(() => editRestriction(snapshot, restrictionSnapshot(map, 8, 8), "zones", { index: 0 }), /changed/);
+});
+
 test("converts rotated map coordinates including the origin", () => {
   assert.deepEqual(mapPoint(calibration, [10, 40]), [500, 500]);
   assert.deepEqual(mapPoint(calibration, [20, 30]), [0, 0]);
