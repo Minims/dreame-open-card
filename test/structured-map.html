@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Structured map fixture</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 12px; }
+  dreame-open-card { display: block; margin: auto; }
+</style>
+<script type="module">
+  import "/dreame-open-card.js";
+
+  const params = new URLSearchParams(location.search);
+  const dark = params.has("dark");
+  const card = document.querySelector("dreame-open-card");
+  const calls = [];
+  const vacuum = "vacuum.fixture", camera = "camera.fixture_map";
+  const calibration = [
+    { vacuum: { x: 100, y: 200 }, map: { x: 20, y: 260 } },
+    { vacuum: { x: 900, y: 200 }, map: { x: 380, y: 260 } },
+    { vacuum: { x: 100, y: 700 }, map: { x: 20, y: 30 } },
+  ];
+  const config = { entity: vacuum, map_camera: camera, map_display: "structured",
+    mode: params.has("panel") ? "panel" : "default", color_scheme: dark ? "dreame_dark" : "dreame_light" };
+  card.style.maxWidth = params.has("panel") ? "1000px" : "380px";
+  document.body.style.background = dark ? "#222" : "#f1f4f7";
+  card.setConfig(config);
+
+  function update(frame = 42, floor = 7, restrictions = {}) {
+    card.hass = {
+      locale: { language: "en" },
+      states: {
+        [vacuum]: { state: "docked", attributes: { friendly_name: "Fixture vacuum", battery_level: 82,
+          selected_map_id: floor, maps: [{ id: 7, name: "Downstairs" }, { id: 8, name: "Upstairs" }],
+          shortcuts: { 25: { id: 25, name: "Kitchen", tasks: [[{ segment_id: 2 }]] } },
+          schedule: [{ id: 1, enabled: true, time: "07:30" }] } },
+        [camera]: { state: "idle", attributes: { saved_map_id: floor, map_id: floor * 10 + 1, frame_id: frame,
+          entity_picture: `/api/camera_proxy/${camera}?v=${frame}`, calibration_points: calibration,
+          virtual_walls: [[450, 250, 450, 650]], no_go_areas: [[200, 300, 300, 400]], no_mopping_areas: [],
+          rooms: { 1: { name: "Living room", x0: 150, x1: 400, y0: 250, y1: 650 },
+            2: { name: "Kitchen", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
+      },
+      services: {
+        vacuum: { start: {}, return_to_base: {} },
+        dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
+          "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map"].map(name => [`vacuum_${name}`, {}])),
+      },
+      callService: async (domain, service, payload, target) => { calls.push({ domain, service, payload, target }); },
+    };
+  }
+
+  window.fixture = { card, calls, update };
+  update();
+
+  if (params.has("check")) {
+    const output = document.querySelector("output");
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const require = (condition, message) => { if (!condition) throw new Error(message); };
+    const button = (id, label) => [...el(id).querySelectorAll("button")]
+      .find(node => node.textContent.trim() === label || node.getAttribute("aria-label") === label);
+    const clickAt = (x, y) => {
+      const img = el("map"), rect = img.getBoundingClientRect();
+      img.dispatchEvent(new MouseEvent("click", { clientX: rect.left + rect.width * x / 400,
+        clientY: rect.top + rect.height * y / 290 }));
+    };
+    const waitFor = async predicate => {
+      for (let i = 0; i < 180; i++) {
+        if (predicate()) return;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error("Map did not render within 180 frames");
+    };
+    try {
+      const canvas = el("structured-map");
+      await waitFor(() => !canvas.hidden);
+      require(canvas.getBoundingClientRect().right <= el("figure").getBoundingClientRect().right + 1,
+        "Map is clipped horizontally");
+      const overlay = el("map-objects").querySelector("svg").getBoundingClientRect();
+      const map = canvas.getBoundingClientRect();
+      require(Math.abs(overlay.width - map.width) <= 1 && Math.abs(overlay.height - map.height) <= 1,
+        "Object overlays are not aligned to the rendered map");
+      const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
+      const expected = dark ? [66, 99, 140, 255] : [164, 194, 244, 255];
+      require(room.every((channel, i) => Math.abs(channel - expected[i]) <= 2), "Room does not render in its configured palette");
+      const texture = canvas.getContext("2d").getImageData(201, 142, 1, 1).data;
+      const tile = canvas.getContext("2d").getImageData(212, 142, 1, 1).data;
+      require(texture.some((channel, i) => Math.abs(channel - tile[i]) > 6), "Tile material does not render its seam");
+      const paintAtEdge = () => canvas.getContext("2d").getImageData(45, 142, 1, 1).data.join();
+      const beforeCalibration = paintAtEdge();
+      update(42, 7, { calibration_points: calibration.map(point => ({ ...point, map: { ...point.map, x: point.map.x + 20 } })) });
+      require(paintAtEdge() !== beforeCalibration, "Canvas ignores a calibration-only update");
+      update();
+      button("modes", "Rooms").click();
+      clickAt(290, 100);
+      el("target-task").click();
+      require(calls.at(-1)?.payload.segments?.[0] === 2, "Pixel selection did not emit room 2");
+
+      button("editor", "Add restricted area").click();
+      clickAt(250, 110);
+      clickAt(290, 150);
+      require(el("map-objects").querySelector(".draft"), "No graphical preview of the restriction");
+      require(button("editor", "Apply map object").disabled && el("target-task").disabled, "Draft is not isolated or confirmed");
+      el("editor").querySelector("input").click();
+      button("editor", "Apply map object").click();
+      await Promise.resolve();
+      const edit = calls.at(-1);
+      require(edit?.service === "vacuum_set_restricted_zone" && edit.payload.no_mops.length === 0
+        && edit.payload.walls[0]?.join() === "450,250,450,650"
+        && edit.payload.zones[0]?.join() === "200,300,300,400"
+        && edit.payload.zones.length === 2, "Restriction did not preserve the existing lists");
+      await new Promise(requestAnimationFrame);
+      const nextAdd = button("editor", "Add restricted area");
+      require(el("editor-detail").hidden || !nextAdd || nextAdd.disabled, "Another edit can overwrite a write that is not visible yet");
+      update(42, 7, { no_go_areas: edit.payload.zones });
+
+      button("shortcuts", "Run shortcut").click();
+      require(calls.at(-1)?.payload.shortcut_id === 25, "Shortcut did not use its ID");
+      require(!el("schedules").querySelector("button"), "Schedule incorrectly exposes a command");
+      const rotation = el("remote").querySelector("input");
+      const count = calls.length;
+      rotation.value = "30";
+      rotation.dispatchEvent(new Event("input"));
+      rotation.dispatchEvent(new Event("change"));
+      require(calls.length === count, "Changing the slider sent a movement command");
+      button("remote", "Move one step").click();
+      require(calls.length === count + 1 && calls.at(-1).payload.rotation === 30, "Explicit step did not send one movement");
+
+      button("editor", "Add restricted area").click();
+      clickAt(250, 110);
+      clickAt(290, 150);
+      const stale = button("editor", "Apply map object");
+      el("editor").querySelector("input").click();
+      el("floors").querySelector("select").value = "8";
+      button("floors", "Switch floor").click();
+      require(calls.at(-1)?.payload.map_id === 8, "Floor switch did not submit the destination floor");
+      const beforeLocalSwitch = calls.length;
+      stale.click();
+      require(calls.length === beforeLocalSwitch, "Previous floor can still be edited while a switch is pending");
+      update(42, 7);
+      require(el("editor-detail").hidden, "Old floor state unlocked restrictions before the switch was confirmed");
+      update(43, 8);
+      const beforeStaleClick = calls.length;
+      stale.click();
+      require(calls.length === beforeStaleClick, "Stale floor can still send an edit");
+      await el("map").decode();
+      require(canvas.hidden && getComputedStyle(el("map")).opacity === "1", "Failed to show camera fallback after floor change");
+      require(el("map-objects").hidden || !el("map-objects").querySelector(".draft"), "Stale draft is still visible");
+      output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
+    } catch (error) {
+      output.value = `FAIL: ${error.message}`;
+      throw error;
+    }
+  }
+</script>
+<dreame-open-card></dreame-open-card>
+<output></output>
+</html>

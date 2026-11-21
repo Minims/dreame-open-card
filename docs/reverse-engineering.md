@@ -114,7 +114,15 @@ subsequent implementation changes.
    ignore action; carpet/furniture selection remains informational until their
    model-specific write schemas are confirmed.
 
-### New REA evidence
+### Structured renderer follow-up
+
+The integration serves structured live data at [`/api/camera_map_data_proxy/{entity_id}`](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/camera.py#L113-L174). The [encoder](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/dreame/map.py#L8240-L8407) groups grid cells by type and emits horizontal runs. The Open Card Canvas renderer uses the public floor and frame identifiers, the image calibration, and the grid rather than inferring room masks from bounding boxes. It remains opt-in; the camera image is the fallback.
+
+The public [`set_restricted_zone`](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/dreame/device.py#L6589-L6609) implementation replaces all three lists, including when a list is omitted. The graphical editor requires three valid lists and rechecks the snapshot before a confirmed write. The card blocks new writes and local floor changes until it observes the submitted lists. The action does not take a floor ID, so a simultaneous change from another client after the frontend check is not prevented by this check.
+
+The shortcut action uses [`shortcut_id`](https://github.com/Tasshack/dreame-vacuum/blob/v2.0.3/custom_components/dreame_vacuum/vacuum.py#L297-L303), not a display name. Schedule rows are read-only. Remote sliders stage a discrete command; automatic repeat and unverified stop-on-release behavior are no longer used.
+
+### Captured REA evidence
 
 - The saved-map-editing **documentation page** loaded in an owned browser
   profile. The capture recorded 109 network transactions, including one
