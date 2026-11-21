@@ -750,6 +750,9 @@ function validateCoordinateRows(rows, field, lengths) {
 }
 
 export function validateCardConfig(config = {}) {
+  if (config.left_handed != null && typeof config.left_handed !== "boolean") throw new Error("left_handed must be a boolean.");
+  if (config.hidden_card_objects != null && (!Array.isArray(config.hidden_card_objects)
+    || !config.hidden_card_objects.every((key) => typeof key === "string"))) throw new Error("hidden_card_objects must be a list of names.");
   if (config.map_display != null && !["standard", "structured"].includes(config.map_display)) throw new Error("map_display is invalid.");
   if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
   const map = config.map ?? {};
@@ -876,12 +879,13 @@ const TEMPLATE = `
   .row, #telemetry { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
   header { text-align:center; padding-inline:38px; }
   .state { color:var(--secondary-text-color,#505050); margin-top:5px; }
+  #title[hidden] + .state { color:inherit; font-size:20px; font-weight:500; margin:0; }
   #telemetry { justify-content:space-evenly; width:min(100%,560px); margin:6px auto 12px; }
   #telemetry:empty, #rail:not(:has(> :not([hidden]))), #quick:empty, #modes:empty { display:none; }
   #telemetry span { display:inline-flex; align-items:center; gap:5px; font-size:20px; }
   #telemetry small { font-size:11px; color:var(--secondary-text-color,#505050); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
-  .stage:has(figure[hidden]):has(#quick:empty) { display:none; }
+  .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
   #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
@@ -890,6 +894,7 @@ const TEMPLATE = `
   img { display:block; max-width:100%; max-height:68vh; height:auto; object-fit:contain; }
   .panel-mode img { max-width:min(100%,804px); max-height:58vh; }
   #quick { grid-column:3; display:grid; align-content:end; gap:8px; }
+  .left-handed #quick { grid-column:1; grid-row:1; }
   #menu { position:absolute; top:11px; right:11px; z-index:2; border:0; padding:0; }
   #menu > summary { display:grid; place-items:center; margin-left:auto; width:36px; height:36px; list-style:none; }
   #menu > summary::-webkit-details-marker { display:none; }
@@ -993,7 +998,7 @@ const TEMPLATE = `
   [hidden] { display:none !important; }
 </style>
 <ha-card><div class="body" lang="en">
-  <header><h2 id="title"></h2><p class="state" id="state"></p></header>
+  <header id="home-header"><h2 id="title"></h2><p class="state" id="state"></p></header>
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
@@ -1111,12 +1116,26 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.shadowRoot.querySelector(".body").classList.toggle("panel-mode", config.mode === "panel");
     const scheme = config.color_scheme ?? "dreame_light";
     const body = this.shadowRoot.querySelector(".body");
+    body.classList.toggle("left-handed", config.left_handed === true);
+    this.applyHomeVisibility(config.hidden_card_objects ?? []);
     body.classList.remove("scheme-dreame-dark", "scheme-dreame-light", "scheme-grayscale");
     body.classList.add(`scheme-${scheme === "dreame_dark" ? "dreame-dark" : scheme === "grayscale" ? "grayscale" : "dreame-light"}`);
     this.sections.clear();
     this.scope = undefined;
     this.clearPicks();
     this.update();
+  }
+
+  applyHomeVisibility(hiddenObjects) {
+    const hidden = new Set(hiddenObjects);
+    const targets = {
+      title: "title", state: "state", status: "telemetry", menu: "menu",
+      task_type: "modes", controls: "basic", action_buttons: "quick",
+    };
+    for (const [key, id] of Object.entries(targets)) this.part(id).hidden = hidden.has(key);
+    if (hidden.has("controls")) this.part("modes").hidden = true;
+    this.part("home-header").hidden = hidden.has("title") && hidden.has("state");
+    if (hidden.has("menu")) this.part("menu").open = false;
   }
 
   static getStubConfig(hass) {

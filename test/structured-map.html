@@ -230,6 +230,18 @@
       el("rooms").querySelector('input[value="2"]').click();
       require([...el("room-markers").children].every(marker => marker.getAttribute("aria-pressed") === "true"),
         "Overlapping map badges cannot both be selected from the room checklist");
+
+      card.setConfig({ ...config, left_handed: true, hidden_card_objects: ["title", "status", "menu", "task_type"] });
+      require(el("title").hidden && !el("state").hidden && el("telemetry").hidden && el("menu").hidden && el("modes").hidden,
+        "Configured home controls are not hidden independently");
+      require(el("quick").getBoundingClientRect().right <= el("figure").getBoundingClientRect().left,
+        "The left-handed action rail is not on the left of the map");
+      card.setConfig({ ...config, hidden_card_objects: ["state", "controls", "action_buttons"] });
+      require(!el("title").hidden && el("state").hidden && el("modes").hidden && el("basic").hidden && el("quick").hidden,
+        "Changing visibility settings left stale home controls");
+      card.setConfig(config);
+      require(!el("state").hidden && !el("modes").hidden && !el("basic").hidden && !el("quick").hidden,
+        "Removing visibility settings does not restore the controls");
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
       output.value = `FAIL: ${error.message}`;

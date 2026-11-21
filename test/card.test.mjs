@@ -316,6 +316,9 @@ test("validates additive panel and map configuration", async () => {
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", color_scheme: "unknown" }), /color_scheme/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", icon_set: "unknown" }), /icon_set/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", locked: "always" }), /locked/i);
+  assert.equal(validateCardConfig({ left_handed: true, hidden_card_objects: ["title", "state", "status"] }), true);
+  assert.throws(() => validateCardConfig({ left_handed: "true" }), /left_handed/);
+  assert.throws(() => validateCardConfig({ hidden_card_objects: [123] }), /hidden_card_objects/);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {

@@ -48,6 +48,8 @@ map:
 
 `map_display: structured` opts into the experimental Canvas renderer. Omit the key (or use `standard`) to keep the camera image. Structured mode uses the Dreame camera's grid, path and positions when its floor and frame match the Home Assistant entity. The robot and dock have distinct icons. The robot shows a directional arrow only when the frame supplies a known heading. It draws wood or tile patterns where the integration reports the material. If the map data or calibration is unavailable, the card keeps the camera image. Non-neutral display transforms keep the camera image and disable map picking.
 
+Set `left_handed: true` to move the map's action rail to the left. `hidden_card_objects` is a YAML list. Supported entries are `title`, `state`, `status` (telemetry), `menu`, `task_type` (mode selector), `controls` (mode selector and primary buttons), and `action_buttons` (the map's action rail). If you hide only `title`, the state takes its place. Other entries do not yet change the card.
+
 If the card cannot discover your settings and maintenance entities, list them explicitly.
 Set a `features` entry to `false` to hide its dedicated view. These switches do not change Home Assistant permissions or remove entities from the generic settings list.
 
