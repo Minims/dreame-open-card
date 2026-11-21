@@ -37,9 +37,11 @@ createServer(async (request, response) => {
     return response.end(fallback);
   }
   if (url.pathname === "/api/camera_map_data_proxy/camera.fixture_map") {
-    if (url.searchParams.get("v") === "43") return response.writeHead(404).end();
+    const version = url.searchParams.get("v");
+    if (version === "43") return response.writeHead(404).end();
+    const map = version === "44" ? { ...frame, frame_id: 44, robot_position: [725, 395, 32767] } : frame;
     response.writeHead(200, { "Content-Type": "application/json" });
-    return response.end(JSON.stringify(frame));
+    return response.end(JSON.stringify(map));
   }
   response.writeHead(404).end();
 }).listen(4173, "127.0.0.1", () => console.log("Map fixture: http://127.0.0.1:4173"));
