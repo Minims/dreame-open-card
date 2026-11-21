@@ -13,6 +13,8 @@ const frame = {
   size: [100, 200, 100, 200, 16, 10, 50, 0, [0, 0, 0, 0]],
   data: runs, map_id: 71, saved_map_id: 7, frame_id: 42,
   floor_material: { 2: 3 },
+  doors: [[450, 500, 500, 500, 450, 500, 500, 500, 0, 1, 1]],
+  furnitures: [[680, 560, 100, 120, 2, 0, 0, 100, 2, 1]],
   charger_position: [225, 595, 90], robot_position: [725, 395, 90],
   path: [[1, 550, 545, 725, 545, 725, 395]],
 };
