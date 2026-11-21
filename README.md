@@ -1,6 +1,6 @@
 # Dreame Open Card
 
-An independent, free Lovelace card for Dreame vacuums. It uses Home Assistant entities, actions and camera images without an activation key. The card is MIT-licensed.
+An independent, free Lovelace card for Dreame vacuums. It uses Home Assistant entities, actions and map data without an activation key. The card is MIT-licensed.
 
 ![Dreame Open Card with simulated Home Assistant entities and a sample floor map](docs/preview.png)
 
@@ -33,6 +33,7 @@ type: custom:dreame-open-card
 entity: vacuum.dreame
 map_camera: camera.dreame_map
 mode: panel
+map_display: structured
 features:
   dock: true
   maintenance: true
@@ -44,6 +45,8 @@ map:
   scale: 1
   offset: [0, 0]
 ```
+
+`map_display: structured` opts into the experimental Canvas renderer. Omit the key (or use `standard`) to keep the camera image. Structured mode uses the Dreame camera's grid, path and positions when its floor and frame match the Home Assistant entity. It draws wood or tile patterns where the integration reports the material. If the map data or calibration is unavailable, the card keeps the camera image. Non-neutral display transforms keep the camera image and disable map picking.
 
 If the card cannot discover your settings and maintenance entities, list them explicitly.
 Set a `features` entry to `false` to hide its dedicated view. These switches do not change Home Assistant permissions or remove entities from the generic settings list.
@@ -65,16 +68,16 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 
 - Start, pause, stop, return to dock, locate and see the battery level.
 - Clean rooms, zones or spots, send the robot to a point and switch floors. Map selection requires a live map camera with calibration data.
-- In room mode, select labeled markers on the active map or use the room checklist below it. The card sends rooms in selection order; the robot may choose a different order. Markers require room bounds, a matching map and no display transform.
+- In room mode, select labeled markers, tap room pixels in structured mode, or use the checklist. The card sends rooms in selection order; the robot may choose a different order. Markers require room bounds, a matching map and no display transform.
 - In zone mode, pick two opposite corners per zone. Drag either numbered handle or focus it and use the arrow keys to resize the zone. Remove zones individually below the map. The card sends the remaining zones together; it does not detect walls or cleanable floor.
 - Open the station sheet to see available tank and bag statuses, start or stop supported wash and dry cycles, or trigger auto-empty. The card falls back to a return-to-dock button if no station entities are found.
-- Select and remove multiple points in spot mode. Go-to still accepts a single destination.
+- Select and remove multiple points in spot mode. Go-to accepts a single destination. When the structured map is visible, both accept only points that land on mapped floor pixels.
 - View consumable estimates in **Accessory usage**, and change exposed device settings through the generic controls. Scheduling controls depend on the entities available on the instance.
 - Browse cleaning and cruising history from the integration's history sensors, with inline session maps when the camera supplies a matching image. Preview recovery and Wi-Fi maps when available, open obstacle photos, and use step-by-step remote control.
-- Open the map editor view for floor background/overlay presentation settings, and use the object summary to see which map collections the integration supplied. Destructive object editing remains behind confirmed action forms.
-- Map objects with valid calibration data appear as selectable markers for obstacles, carpets and furniture; obstacle markers can use the integration's ignore/restore action when available. Unknown object shapes remain in the summary only.
+- Open **Map editor** to preview and add a rectangular no-go or no-mopping area. This requires the active floor and all three current restriction lists: virtual walls, no-go areas and no-mopping areas. Check the confirmation box to apply. After a write or floor switch, the editor waits for Home Assistant to report the new state. If the update cannot be confirmed, verify the map in Home Assistant before reloading the card.
+- Map objects with valid calibration data can appear as markers for obstacles, carpets and furniture. Obstacle ignore/restore is available in the advanced action form when supported.
 - View discovered schedules and shortcuts when the integration exposes them. Existing schedule/shortcut content is shown read-only except for supported shortcut execution.
-- Remote control uses repeated 250 ms step commands while a slider is active and sends a zeroed stop command on release, change or focus loss. Actual safe continuous steering still depends on the robot model and integration.
+- Remote control sends a single step only when you press **Move one step**. Adjusting the sliders does not send commands.
 - Rename, split and merge rooms, back up and restore maps, and edit walls, restricted zones, carpets, furniture and floor materials through action forms. Advanced actions require confirmation. The field names match the Home Assistant action schema.
 - Use responsive panel mode with Home Assistant theme colors, keyboard-focus styles and capability-driven controls. Unsupported model actions remain hidden or disabled instead of producing invalid service calls.
 
@@ -83,6 +86,8 @@ Feature availability depends on the vacuum model, integration version and enable
 ## Development
 
 Run `npm test` with Node.js. The card ships as one JavaScript module and has no build dependencies.
+
+To exercise the card in a browser without Home Assistant, run `node scripts/preview-map.mjs`. Open `http://127.0.0.1:4173/?check` for the compact light self-check or `http://127.0.0.1:4173/?check&panel&dark` for wide dark. Omit `check` to leave the fixture on the initial screen for screenshots. The fixture has no real service calls and is not a pixel-parity test against DVC.
 
 The repository layout follows the [Lovelace boilerplate recommended by HACS](https://github.com/custom-cards/boilerplate-card). CI runs the Node tests and HACS plugin validation. Publishing a GitHub release attaches the JavaScript file from its tag. The tag must match `CARD_VERSION` in the module.
 

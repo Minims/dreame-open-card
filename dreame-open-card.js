@@ -66,17 +66,17 @@ const FRENCH = {
   "Furniture": "Mobilier",
   "Predefined points": "Points prédéfinis",
   "Map editor": "Éditeur de carte",
+  "The map changed. Select the area again.": "La carte a changé. Sélectionnez de nouveau la zone.",
+  "Choose a point on the mapped floor.": "Choisissez un point au sol sur la carte.",
+  "Waiting for the camera to confirm the map edit.": "En attente de la confirmation de la modification par la caméra.",
+  "Rotation": "Rotation",
+  "Disabled": "Désactivé",
   "Add restricted area": "Ajouter une zone interdite",
   "Add no-mopping area": "Ajouter une zone sans serpillière",
   "Apply map object": "Appliquer l’objet de carte",
   "Edit floor": "Modifier l’étage",
-  "Background image": "Image de fond",
-  "Overlay image": "Image superposée",
-  "Save floor view": "Enregistrer la vue de l’étage",
   "Schedules": "Programmation",
   "Shortcuts": "Raccourcis",
-  "New schedule": "Nouvelle programmation",
-  "New shortcut": "Nouveau raccourci",
   "Start time": "Heure de début",
   "Days": "Jours",
   "Run shortcut": "Lancer le raccourci",
@@ -209,6 +209,164 @@ export function mapArea(a, b) {
 export function localImage(url) {
   return typeof url === "string" && /^\/api\/camera(?:_history_map|_map_obstacle|_recovery_map|_wifi_map)?_proxy\/camera\.[a-z0-9_]+(?:\?[^\r\n#]*)?$/.test(url)
     ? url : null;
+}
+
+export function mapDataURL(image, camera) {
+  if (!localImage(image)) return null;
+  const [path, query] = image.split("?", 2);
+  if (path !== `/api/camera_proxy/${camera}`) return null;
+  const params = new URLSearchParams(query);
+  const version = params.get("v");
+  if (!version) return null;
+  const request = new URLSearchParams();
+  if (params.get("token")) request.set("token", params.get("token"));
+  request.set("v", version);
+  return `/api/camera_map_data_proxy/${camera}?${request}`;
+}
+
+export function decodeMapScene(raw, { floor, mapId, frame } = {}) {
+  const [left, top, , , width, height, step] = Array.isArray(raw?.size) ? raw.size : [];
+  if (raw?.empty_map || raw?.temporary_map || raw?.wifi_map || ![left, top, width, height, step].every(Number.isSafeInteger)
+    || width <= 0 || height <= 0 || step <= 0 || width * height > 1_000_000
+    || floor == null || String(raw.saved_map_id ?? raw.map_id) !== String(floor)
+    || (mapId != null && String(raw.map_id) !== String(mapId))
+    || (frame != null && String(raw.frame_id) !== String(frame))
+    || !raw.data || typeof raw.data !== "object" || Array.isArray(raw.data)) return null;
+  const pixels = new Uint16Array(width * height);
+  const layers = Object.entries(raw.data);
+  const hiddenRooms = new Set(Array.isArray(raw.hidden_segments) ? raw.hidden_segments : []);
+  let covered = 0;
+  for (const [key, runs] of layers) {
+    const type = Number(key);
+    if (String(type) !== key || !Number.isInteger(type) || type < 1 || (type > 255 && type !== 512)
+      || !Array.isArray(runs) || runs.length % 3) return null;
+    for (let i = 0; i < runs.length; i += 3) {
+      const x = runs[i], y = runs[i + 1], count = runs[i + 2];
+      if (![x, y, count].every(Number.isSafeInteger) || x < 0 || y < 0 || count < 1
+        || y >= height || x + count > width || (covered += count) > 2 * pixels.length) return null;
+      if (type === 512) continue;
+      const start = y * width + x;
+      for (let j = start; j < start + count; j++) {
+        if (pixels[j]) return null;
+        pixels[j] = type;
+      }
+    }
+  }
+  if (!pixels.some(Boolean)) return null;
+  return { left, top, width, height, step, pixels, layers, hiddenRooms, materials: raw.floor_material,
+    robot: raw.robot_position, dock: raw.charger_position, path: raw.path };
+}
+
+const roomPixel = (type) => type > 100 && type < 200 ? type - 100 : type;
+const isRoomFloor = (type) => type > 0 && type < 100;
+export const cleanablePixel = (type) => isRoomFloor(type) || type === 253 || type === 254;
+
+export function scenePixel(scene, [x, y]) {
+  const col = Math.floor((x - scene.left) / scene.step);
+  const row = Math.floor((y - scene.top) / scene.step);
+  const type = col >= 0 && col < scene.width && row >= 0 && row < scene.height ? scene.pixels[row * scene.width + col] : 0;
+  return scene.hiddenRooms.has(roomPixel(type)) ? 0 : type;
+}
+
+const ROOM_COLORS = {
+  light: ["#a4c2f4", "#aed59b", "#91cce7", "#f4d877", "#b3a4da", "#efb997"],
+  dark: ["#42638c", "#4e7248", "#366c81", "#8a753c", "#675686", "#8f6247"],
+};
+
+function floorPattern(ctx, material, dark) {
+  const tile = document.createElement("canvas");
+  tile.width = tile.height = 32;
+  const ink = tile.getContext("2d");
+  ink.fillStyle = dark ? "#ffffff32" : "#24354a32";
+  ink.fillRect(0, 0, 32, 1);
+  if (material === 3) ink.fillRect(0, 0, 1, 32);
+  else {
+    ink.fillRect(0, 16, 32, 1);
+    ink.fillRect(0, 0, 1, 16);
+    ink.fillRect(16, 16, 1, 16);
+  }
+  const pattern = ctx.createPattern(tile, "repeat");
+  const transform = new DOMMatrix().scale(.125);
+  if (material === 2) transform.rotateSelf(90);
+  pattern.setTransform(transform);
+  return pattern;
+}
+
+function fillMapRuns(ctx, runs) {
+  for (let i = 0; i < runs.length; i += 3) ctx.fillRect(runs[i], runs[i + 1], runs[i + 2], 1);
+}
+
+function paintMapCells(ctx, scene, dark) {
+  const palette = ROOM_COLORS[dark ? "dark" : "light"];
+  const patterns = new Map();
+  for (const [key, runs] of scene.layers) {
+    const type = Number(key);
+    const room = roomPixel(type);
+    if ((type >= 200 && type <= 232) || scene.hiddenRooms.has(room)) continue;
+    if (type === 512) ctx.globalCompositeOperation = "source-atop";
+    const wall = [251, 255].includes(type) || (type > 100 && type < 200);
+    ctx.fillStyle = type === 512 ? "#b891574d" : wall ? (dark ? "#96a6bb" : "#47566a")
+      : isRoomFloor(type) ? palette[(room + palette.length - 1) % palette.length] : (dark ? "#46515e" : "#cfdae5");
+    fillMapRuns(ctx, runs);
+    const material = scene.materials?.[type];
+    if (!isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
+    if (!patterns.has(material)) patterns.set(material, floorPattern(ctx, material, dark));
+    ctx.fillStyle = patterns.get(material);
+    fillMapRuns(ctx, runs);
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function paintScene(canvas, scene, calibration, image) {
+  const { left, top, width, height, step } = scene;
+  const [origin, right, up] = [[left, top], [left + step, top], [left, top + step]]
+    .map((coords) => projectPoint(calibration, coords, "vacuum", "map"));
+  const { naturalWidth, naturalHeight } = image;
+  if (![origin, right, up].every((coords) => coords?.every(Number.isFinite))
+    || !naturalWidth || !naturalHeight || naturalWidth * naturalHeight > 4_000_000) return false;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  canvas.width = naturalWidth;
+  canvas.height = naturalHeight;
+  ctx.setTransform(right[0] - origin[0], right[1] - origin[1], up[0] - origin[0], up[1] - origin[1], ...origin);
+  const dark = canvas.closest(".body").classList.contains("scheme-dreame-dark");
+  paintMapCells(ctx, scene, dark);
+  paintMapPaths(ctx, scene, dark);
+  paintMapPositions(ctx, scene);
+  return true;
+}
+
+function paintMapPaths(ctx, { path, left, top, step }, dark) {
+  if (!Array.isArray(path)) return;
+  ctx.strokeStyle = dark ? "#c0edff" : "#178cb5";
+  ctx.lineWidth = .16;
+  for (const route of path) {
+    if (!Array.isArray(route) || route.length < 5 || route.length % 2 !== 1 || !route.slice(1).every(Number.isFinite)) continue;
+    ctx.beginPath();
+    ctx.moveTo((route[1] - left) / step, (route[2] - top) / step);
+    for (let i = 3; i < route.length; i += 2) ctx.lineTo((route[i] - left) / step, (route[i + 1] - top) / step);
+    ctx.stroke();
+  }
+}
+
+function paintMapPositions(ctx, scene) {
+  const { left, top, step, width, height } = scene;
+  const transform = ctx.getTransform();
+  const radius = Math.min(ctx.canvas.width, ctx.canvas.height) * .024;
+  ctx.resetTransform();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = radius / 4;
+  for (const [position, color] of [[scene.dock, "#007d68"], [scene.robot, "#007d9d"]]) {
+    if (!Array.isArray(position) || !position.slice(0, 2).every(Number.isFinite) || position.length < 2) continue;
+    const x = (position[0] - left) / step, y = (position[1] - top) / step;
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+    const screen = transform.transformPoint({ x, y });
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y, radius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+  }
 }
 
 export function deviceEntities(hass, config) {
@@ -352,14 +510,59 @@ export function appendMapRectangle(existing, first, second, field) {
   return [...existing, rectangle];
 }
 
+export function restrictionSnapshot(map, activeFloor, cameraFloor) {
+  if (activeFloor == null || String(activeFloor) !== String(cameraFloor)) return null;
+  const { virtual_walls, no_go_areas, no_mopping_areas } = map;
+  if (![virtual_walls, no_go_areas, no_mopping_areas].every(Array.isArray)) return null;
+  const walls = virtual_walls.map(lineCoordinates);
+  const zones = no_go_areas.map(rectangleCoordinates);
+  const no_mops = no_mopping_areas.map(rectangleCoordinates);
+  return [...walls, ...zones, ...no_mops].every(Boolean) ? JSON.stringify({ floor: activeFloor, walls, zones, no_mops }) : null;
+}
+
+function lineCoordinates(line) {
+  const coords = Array.isArray(line) ? line : [line?.x0, line?.y0, line?.x1, line?.y1];
+  return coords.length === 4 && coords.every(Number.isSafeInteger) ? coords : null;
+}
+
+function rectangleCoordinates(area) {
+  if (!area || area.angle || area.hidden) return null;
+  const coords = Array.isArray(area) ? area : [area.x0, area.y0, area.x1, area.y1, area.x2, area.y2, area.x3, area.y3];
+  if (coords.length === 4 && coords.every(Number.isSafeInteger)) return mapArea(coords.slice(0, 2), coords.slice(2));
+  if (coords.length !== 8 || !coords.every(Number.isSafeInteger)) return null;
+  const xs = [coords[0], coords[2], coords[4], coords[6]], ys = [coords[1], coords[3], coords[5], coords[7]];
+  const rect = mapArea([Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]);
+  if (!rect || new Set(xs).size !== 2 || new Set(ys).size !== 2
+    || new Set(xs.map((x, i) => `${x}:${ys[i]}`)).size !== 4) return null;
+  return rect;
+}
+
+export function appendRestriction(before, current, field, corners) {
+  if (!before || before !== current) throw new Error("The map changed. Select the area again.");
+  const { walls, zones, no_mops } = JSON.parse(current);
+  const restrictions = { walls, zones, no_mops };
+  restrictions[field] = appendMapRectangle(restrictions[field], corners[0], corners[1], field);
+  return mapEditPayload("set_restricted_zone", {
+    walls: JSON.stringify(restrictions.walls), zones: JSON.stringify(restrictions.zones),
+    no_mops: JSON.stringify(restrictions.no_mops), confirm: true,
+  });
+}
+
 export function scheduleEntries(attributes = {}) {
+  if (Array.isArray(attributes)) return attributes.flatMap((task) => typeof task?.time === "string"
+    ? [{ name: task.time, enabled: task.enabled === true && !task.invalid, time: null, days: [] }] : []);
   return Object.entries(attributes).flatMap(([name, value]) => value && typeof value === "object"
     ? [{ name, enabled: value.enabled !== false, time: value.time ?? value.start_time ?? null, days: value.days ?? [] }] : []);
 }
 
 export function shortcutEntries(attributes = {}) {
-  return Object.entries(attributes).flatMap(([name, value]) => value && typeof value === "object"
-    ? [{ name, tasks: Array.isArray(value.tasks) ? value.tasks.length : null }] : []);
+  return Object.entries(attributes).flatMap(([key, shortcut]) => {
+    if (!shortcut || typeof shortcut !== "object") return [];
+    const id = shortcut.id ?? (/^\d+$/.test(key) ? Number(key) : null);
+    return [{ ...(Number.isSafeInteger(id) && id >= 25 && id <= 128 ? { id } : {}),
+      name: typeof shortcut.name === "string" && shortcut.name ? shortcut.name : key,
+      tasks: Array.isArray(shortcut.tasks) ? shortcut.tasks.length : null }];
+  });
 }
 
 export function buildCleaningTask(mode, selection = {}) {
@@ -405,8 +608,11 @@ export function mapEditPayload(operation, values = {}) {
   const payload = parseFields(definitions[operation], values);
   if (operation === "set_restricted_zone") {
     validateCoordinateRows(payload.walls, "walls", [4]);
-    validateCoordinateRows(payload.zones, "zones", [4, 8]);
-    validateCoordinateRows(payload.no_mops, "no_mops", [4, 8]);
+    for (const field of ["zones", "no_mops"]) {
+      const rows = payload[field];
+      validateCoordinateRows(rows, field, [4, 5]);
+      if (!rows.every((row) => row.length === rows[0].length)) throw new Error("Mixed coordinate rows · " + field);
+    }
   } else if (operation === "set_walls") {
     validateCoordinateRows(payload.doors, "doors", [6]);
     if (payload.walls) validateCoordinateRows(Object.values(payload.walls), "walls");
@@ -420,6 +626,7 @@ function validateCoordinateRows(rows, field, lengths) {
 }
 
 export function validateCardConfig(config = {}) {
+  if (config.map_display != null && !["standard", "structured"].includes(config.map_display)) throw new Error("map_display is invalid.");
   if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
   const map = config.map ?? {};
   if (map.scale != null && (!Number.isFinite(map.scale) || map.scale <= 0)) throw new Error("map.scale must be positive.");
@@ -501,7 +708,7 @@ const EDITS = [
   ["split_segments", "Split a room", [["segment", "int", true], ["line", "list", true], ["map_id", "int"]]],
   ["merge_segments", "Merge rooms", [["segments", "list", true], ["map_id", "int"]]],
   ["set_restricted_zone", "Replace virtual walls and restricted zones",
-    [["walls", "list"], ["zones", "list"], ["no_mops", "list"]]],
+    [["walls", "list", true], ["zones", "list", true], ["no_mops", "list", true]]],
   ["set_walls", "Replace physical walls and doors", [["walls", "object"], ["doors", "list"], ["map_id", "int"]]],
   ["set_floor_material", "Floor material", [["material", "object", true], ["map_id", "int"]]],
   ["set_furniture", "Place furniture", [["furnitures", "list", true], ["map_id", "int"]]],
@@ -535,7 +742,7 @@ const TEMPLATE = `
   :host { display:block; color:var(--primary-text-color,#151515); }
   ha-card { --accent:#0099bf; --control-bg:var(--dvc-control-bg,#e0e0e0);
     background:var(--ha-card-background,var(--card-background-color,#fff)); }
-  .body.scheme-dreame-dark { --accent:#0099bf; color:#eee; background:#1b1b1b; }
+  .body.scheme-dreame-dark { --accent:#0099bf; --secondary-text-color:#bdbdbd; color:#eee; background:#1b1b1b; }
   .body.scheme-dreame-light { --accent:#0099bf; }
   .body.scheme-grayscale { --accent:#555; filter:grayscale(.85); }
   .body { position:relative; padding:16px 8px 20px; display:grid; gap:16px; }
@@ -551,8 +758,11 @@ const TEMPLATE = `
   #telemetry small { font-size:11px; color:var(--secondary-text-color,#505050); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:empty) { display:none; }
-  figure { grid-column:2; display:grid; place-items:center; margin:0; overflow:hidden; }
+  figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
+  #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #map-layer.structured #map { opacity:0; }
+  #map-layer.room-picking #map { cursor:crosshair; }
   img { display:block; max-width:100%; max-height:68vh; height:auto; object-fit:contain; }
   .panel-mode img { max-width:min(100%,804px); max-height:58vh; }
   #quick { grid-column:3; display:grid; align-content:end; gap:8px; }
@@ -615,11 +825,12 @@ const TEMPLATE = `
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
-  #map-objects { position:absolute; inset:0; pointer-events:none; }
+  #map-objects, #map-objects svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
   #map-objects .wall { stroke:#0b8fe3; stroke-width:4; }
   #map-objects .threshold { stroke:#8c6b2f; stroke-width:3; stroke-dasharray:5 3; }
   #map-objects .restricted { fill:#d9464630; stroke:#d94646; stroke-width:2; }
+  #map-objects .draft { stroke-dasharray:5 3; }
   #map-objects .carpet { fill:#f4cf4d30; stroke:#d8a600; stroke-width:2; }
   details { border-top:1px solid var(--divider-color,#aebcb5); padding:10px 0 0; }
   details > div, form { display:grid; gap:10px; margin-top:10px; }
@@ -643,7 +854,7 @@ const TEMPLATE = `
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
-    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
+    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><canvas id="structured-map" aria-hidden="true" hidden></canvas><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -698,6 +909,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const map = this.part("map");
     map.addEventListener("click", (event) => this.pickOnMap(event));
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
+      this.renderStructuredMap();
       this.renderRoomMarkers();
       this.renderObjectMarkers();
       this.renderMapObjectLayers();
@@ -712,6 +924,15 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   part(id) { return this.shadowRoot.getElementById(id); }
+
+  connectedCallback() { this.update(); }
+
+  disconnectedCallback() {
+    this.sceneRequest?.abort();
+    this.sceneRequest = null;
+    this.sceneKey = null;
+    this.mapScene = null;
+  }
 
   t(message) { return translate(this.language, message); }
 
@@ -822,7 +1043,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   selectMode(mode) {
     const changed = this.mode !== mode;
     this.mode = mode;
-    if (changed) this.clearPicks();
+    if (changed && this.editPickMode) this.cancelRestrictionEdit();
+    else if (changed) this.clearPicks();
     this.shadowRoot.querySelector(".body").dataset.mode = mode;
     this.part("rooms").hidden = mode !== "room";
     this.part("tools").hidden = mode === "global" || mode === "room";
@@ -834,6 +1056,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
     }
     this.part("map-layer").classList.toggle("picking", this.mapPicking && !this.part("tools").hidden);
+    this.part("map-layer").classList.toggle("room-picking", Boolean(this.structuredVisible && mode === "room"));
     this.renderRoomMarkers();
     this.renderObjectMarkers();
     this.renderMapObjectLayers();
@@ -923,18 +1146,24 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const position = result && [result[0] / img.naturalWidth, result[1] / img.naturalHeight];
       return position?.every((axis) => axis >= 0 && axis <= 1) ? position : null;
     };
-    const rectangles = (value, className) => (Array.isArray(value) ? value : []).flatMap((row) => {
-      if (!Array.isArray(row) || row.length < 4 || !row.slice(0, 4).every(Number.isSafeInteger)) return [];
+    const rectangles = (value, className) => (Array.isArray(value) ? value : []).flatMap((area) => {
+      const row = rectangleCoordinates(area);
+      if (!row) return [];
       const points = [[row[0], row[1]], [row[2], row[1]], [row[2], row[3]], [row[0], row[3]]].map(project);
       return points.every(Boolean) ? [{ className, points }] : [];
     });
-    const wallLines = (value, className) => (Array.isArray(value) ? value : []).flatMap((row) => {
-      if (!Array.isArray(row) || row.length < 4 || !row.slice(0, 4).every(Number.isSafeInteger)) return [];
+    const wallLines = (value, className) => (Array.isArray(value) ? value : []).flatMap((line) => {
+      const row = lineCoordinates(Array.isArray(line) ? line.slice(0, 4) : line);
+      if (!row) return [];
       const start = project(row.slice(0, 2)); const end = project(row.slice(2, 4));
       return start && end ? [{ className, start, end }] : [];
     });
     const polygons = [...rectangles(attrs.no_go_areas, "restricted"), ...rectangles(attrs.no_mopping_areas, "restricted"),
       ...rectangles(attrs.carpets, "carpet")];
+    if (this.editPickMode && this.picks.length === 2) {
+      const draft = mapArea(...this.picks.map(({ coords }) => coords));
+      polygons.push(...rectangles([draft], "restricted draft"));
+    }
     const lines = [...wallLines(attrs.virtual_walls, "wall"), ...wallLines(attrs.virtual_thresholds, "threshold"),
       ...wallLines(attrs.passable_thresholds, "threshold"), ...wallLines(attrs.impassable_thresholds, "threshold")];
     layer.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || (!polygons.length && !lines.length);
@@ -956,51 +1185,81 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   renderObjectEditor() {
     const editor = this.part("editor");
-    const canRestricted = hasAction(this.ha, dreame("set_restricted_zone"));
-    if (!this.objectSelection && !canRestricted) return;
-    this.part("editor-detail").hidden = false;
+    const canRestricted = this.canEditRestrictions() && hasAction(this.ha, dreame("set_restricted_zone"));
+    const enabled = this.config.features?.editing !== false && (this.objectSelection || canRestricted);
+    this.part("editor-detail").hidden = !enabled;
+    if (!enabled) return;
+    const signature = JSON.stringify([this.objectSelection, Boolean(canRestricted), this.editPickMode, this.picks]);
+    if (editor.dataset.signature === signature) return;
+    editor.dataset.signature = signature;
     editor.replaceChildren();
     if (this.objectSelection) {
-      const { kind, label } = this.objectSelection;
-      editor.append(element("p", `${this.t("Map objects")}: ${label}`));
-      if (kind === "obstacles" && hasAction(this.ha, dreame("set_obstacle_ignore"))) {
-      editor.append(this.button(this.t("Ignore or restore an obstacle"), () => {
-        void this.run(dreame("set_obstacle_ignore"), { x: this.objectSelection.x, y: this.objectSelection.y, obstacle_ignored: true });
-      }, !online(this.ha.states[this.config.entity]), true));
-      } else editor.append(element("p", this.t("Advanced action") + " · " + this.t("Confirm the action")));
+      editor.append(element("p", `${this.t("Map objects")}: ${this.objectSelection.label}`));
     }
-    if (canRestricted) {
-      const actions = element("div", null, { class: "row" });
-      for (const [field, label] of [["zones", "Add restricted area"], ["no_mops", "Add no-mopping area"]]) {
-        actions.append(this.button(this.t(label), () => {
-          this.editPickMode = field;
-          this.picks = [];
-          this.part("editor-detail").open = true;
-          this.status("Choose two opposite corners for each zone.");
-        }, !online(this.ha.states[this.config.entity])));
-      }
-      editor.append(actions);
-      if (this.editPickMode && this.picks.length === 2) {
-        const apply = this.button(this.t("Apply map object"), async () => {
-          const first = this.picks[0].coords;
-          const second = this.picks[1].coords;
-          const existingZones = Array.isArray(this.currentMap?.[this.editPickMode]) ? this.currentMap[this.editPickMode] : [];
-          const replacement = appendMapRectangle(existingZones, first, second, this.editPickMode);
-          const data = mapEditPayload("set_restricted_zone", {
-            walls: JSON.stringify(this.currentMap?.virtual_walls ?? []),
-            zones: JSON.stringify(this.editPickMode === "zones" ? replacement : this.currentMap?.no_go_areas ?? []),
-            no_mops: JSON.stringify(this.editPickMode === "no_mops" ? replacement : this.currentMap?.no_mopping_areas ?? []),
-            confirm: true,
-          });
-          if (await this.run(dreame("set_restricted_zone"), data)) {
-            this.editPickMode = null;
-            this.clearPicks();
-            this.renderObjectEditor();
-          }
-        }, !online(this.ha.states[this.config.entity]), true);
-        editor.append(apply);
-      }
+    if (!canRestricted) return;
+    const actions = element("div", null, { class: "row" });
+    for (const [field, label] of [["zones", "Add restricted area"], ["no_mops", "Add no-mopping area"]]) {
+      actions.append(this.button(this.t(label), () => {
+        this.editPickMode = field;
+        this.editSnapshot = this.restrictions;
+        this.clearPicks();
+        this.renderObjectEditor();
+        this.status("Choose two opposite corners for each zone.");
+      }));
     }
+    if (this.editPickMode) actions.append(this.button(this.t("Clear"), () => this.cancelRestrictionEdit()));
+    editor.append(actions);
+    if (this.editPickMode && this.picks.length === 2) this.renderRestrictionConfirmation(editor);
+  }
+
+  cancelRestrictionEdit() {
+    this.editPickMode = null;
+    this.editSnapshot = null;
+    this.clearPicks();
+    this.renderObjectEditor();
+  }
+
+  renderRestrictionConfirmation(editor) {
+    const snapshot = this.editSnapshot;
+    const confirm = element("input", null, { type: "checkbox" });
+    const apply = this.button(this.t("Apply map object"), async () => {
+      if (!confirm.checked || snapshot !== this.editSnapshot || !this.canEditRestrictions(snapshot)) return;
+      try {
+        const corners = this.picks.map(({ coords }) => coords);
+        const payload = appendRestriction(snapshot, this.restrictions, this.editPickMode, corners);
+        await this.writeRestrictions(snapshot, payload);
+      } catch (error) { this.status(error.message, true); }
+    }, true);
+    confirm.addEventListener("change", () => { apply.disabled = !confirm.checked; });
+    editor.append(this.label(this.t("Confirm this action on the robot"), confirm), apply);
+  }
+
+  canEditRestrictions(snapshot = this.restrictions) {
+    return Boolean(snapshot && snapshot === this.restrictions && this.mapPicking && !this.pendingFloor && !this.pendingRestriction);
+  }
+
+  async writeRestrictions(snapshot, payload) {
+    if (!this.canEditRestrictions(snapshot)) return;
+    const { floor } = JSON.parse(snapshot);
+    const expected = restrictionSnapshot({
+      virtual_walls: payload.walls, no_go_areas: payload.zones, no_mopping_areas: payload.no_mops,
+    }, floor, floor);
+    const pending = { expected, finished: false };
+    this.pendingRestriction = pending;
+    this.cancelRestrictionEdit();
+    this.update();
+    const sent = await this.run(dreame("set_restricted_zone"), payload);
+    pending.finished = true;
+    this.update();
+    if (sent && this.pendingRestriction === pending) this.status("Waiting for the camera to confirm the map edit.");
+  }
+
+  async switchFloor(floor, activeFloor) {
+    if (this.pendingFloor || this.pendingRestriction || String(floor) === String(activeFloor)) return;
+    this.pendingFloor = floor;
+    this.cancelRestrictionEdit();
+    this.update();
+    await this.run(dreame("select_map"), { map_id: floor });
   }
 
   updateTargetButton() {
@@ -1013,12 +1272,12 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       : this.mode === "zone" ? this.zones.length && !this.picks.length && !this.zoneDrag
       : this.mode === "spot" ? this.picks.length
       : this.picks.length === tool?.[3];
-    button.disabled = !online(this.ha?.states[this.config.entity]) || !ready;
+    button.disabled = !online(this.ha?.states[this.config.entity]) || !ready || Boolean(this.editPickMode);
     button.lastChild.textContent = " " + this.t(this.mode === "goto" ? "Go to point" : "Clean");
   }
 
   sendTargetTask() {
-    if (this.mode === "global") return;
+    if (this.mode === "global" || this.editPickMode) return;
     if (this.mode !== "room") return this.sendPicks();
     if (!this.roomSelection.size) return;
     const { action, data: payload } = buildCleaningTask("room", { rooms: [...this.roomSelection] });
@@ -1026,11 +1285,13 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   renderMenu(basic, available) {
-    const panels = [["edit-detail", "Map editing and management", "home-edit"], ["photos-detail", "History and photos", "history"],
+    const panels = [["editor-detail", "Map editor", "map-outline"], ["edit-detail", "Map editing and management", "home-edit"],
+      ["photos-detail", "History and photos", "history"], ["schedule-detail", "Schedules", "calendar-clock"],
+      ["shortcut-detail", "Shortcuts", "lightning-bolt-outline"],
       ["maintenance-detail", "Accessory usage", "wrench-outline"],
       ["remote-detail", "Step-by-step remote control", "gamepad-variant-outline"], ["settings-detail", "Settings, dock and maintenance", "tune"]]
       .filter(([id]) => !this.part(id).hidden);
-    const quick = panels.filter(([id]) => id !== "maintenance-detail" && id !== "objects-detail");
+    const quick = panels.filter(([id]) => !["maintenance-detail", "schedule-detail", "shortcut-detail"].includes(id));
     this.section("quick", quick, (node) => node.replaceChildren(...quick.map(([id, label, name]) =>
       this.iconButton(label, name, () => this.openView(id), { iconOnly: true }))));
     const locate = basic.find(([action]) => action === "vacuum.locate");
@@ -1135,56 +1396,31 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     });
   }
 
-  renderFloorEditor(map, available, activeMapId) {
-    const hasEdit = this.config.features?.editing !== false && this.config.map?.background !== undefined;
-    this.part("editor-detail").hidden = !hasEdit;
-    if (!hasEdit) return;
-    this.section("editor", [this.config.map, activeMapId], (node) => {
-      node.replaceChildren();
-      const form = element("form");
-      const background = element("input", null, { type: "url", name: "background", value: this.config.map?.background ?? "", placeholder: "/local/floor.png" });
-      const overlay = element("input", null, { type: "url", name: "overlay", value: this.config.map?.overlay ?? "", placeholder: "/local/overlay.png" });
-      form.append(this.label(this.t("Background image"), background), this.label(this.t("Overlay image"), overlay));
-      form.append(this.button(this.t("Save floor view"), () => {
-        const next = { ...(this.config.map ?? {}), background: background.value.trim(), overlay: overlay.value.trim() };
-        this.config = { ...this.config, map: next };
-        this.update();
-        this.status("Command sent.");
-      }, !available, true));
-      form.addEventListener("submit", (event) => event.preventDefault());
-      node.append(form, element("p", `${this.t("Floor")} ${activeMapId ?? "1"}`));
-    });
-  }
-
-  renderCollectionPanel(id, title, entries, action, available, actionLabel) {
-    const panel = this.part(id);
-    panel.hidden = !entries.length;
-    this.section(id, entries, (node) => {
-      node.replaceChildren(...entries.map(({ name, enabled, time, days, tasks }) => {
+  renderCollectionPanel(id, entries, action) {
+    this.part(id === "schedules" ? "schedule-detail" : "shortcut-detail").hidden = !entries.length;
+    this.section(id, [entries, action], (node) => {
+      node.replaceChildren(...entries.map(({ id: shortcutId, name, enabled, time, days, tasks }) => {
         const row = element("div", null, { class: "history-row" });
         row.append(element("strong", name));
         if (time) row.append(element("small", `${this.t("Start time")}: ${time}`));
-        if (days?.length) row.append(element("small", `${this.t("Days")}: ${days.join(", ")}`));
+        if (Array.isArray(days) && days.length) row.append(element("small", `${this.t("Days")}: ${days.join(", ")}`));
         if (tasks !== undefined && tasks !== null) row.append(element("small", `${tasks} tasks`));
-        const button = this.button(this.t(actionLabel), () => this.run(action, { name }), !available);
-        if (enabled === false) row.append(element("small", "Disabled"));
-        row.append(button);
+        if (enabled === false) row.append(element("small", this.t("Disabled")));
+        if (action && shortcutId != null) row.append(this.button(this.t("Run shortcut"),
+          () => this.run(action, { shortcut_id: shortcutId })));
         return row;
       }));
-      if (!entries.length) node.append(element("p", title));
     });
   }
 
-  renderSchedulesAndShortcuts(ids, available) {
+  renderSchedulesAndShortcuts(ids, attrs, available) {
     const schedule = ids.find((id) => id.endsWith("_scheduled_clean") || id.includes("schedule"));
     const shortcut = ids.find((id) => id.endsWith("_shortcuts") || id.includes("shortcut"));
-    const schedules = scheduleEntries(schedule ? this.ha.states[schedule]?.attributes : {});
-    const shortcuts = shortcutEntries(shortcut ? this.ha.states[shortcut]?.attributes : {});
-    const action = hasAction(this.ha, dreame("start_shortcut")) ? dreame("start_shortcut") : "";
-    this.renderCollectionPanel("schedules", "Schedules", schedules, action, available && Boolean(action), "New schedule");
-    this.renderCollectionPanel("shortcuts", "Shortcuts", shortcuts, action, available && Boolean(action), "Run shortcut");
-    this.part("schedule-detail").hidden = !schedules.length;
-    this.part("shortcut-detail").hidden = !shortcuts.length;
+    const schedules = scheduleEntries(attrs.schedule ?? this.ha.states[schedule]?.attributes);
+    const shortcuts = shortcutEntries(attrs.shortcuts ?? this.ha.states[shortcut]?.attributes);
+    this.renderCollectionPanel("schedules", schedules);
+    const action = dreame("start_shortcut");
+    this.renderCollectionPanel("shortcuts", shortcuts, available && hasAction(this.ha, action) ? action : null);
   }
 
   renderRoomPreferences(node, roomIds, available) {
@@ -1232,6 +1468,52 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
   }
 
+  loadStructuredMap(image, identity) {
+    const url = this.isConnected && this.config.map_display === "structured" && this.mapPicking
+      && identity.floor != null && identity.frame != null ? mapDataURL(image, this.config.map_camera) : null;
+    const key = url ? JSON.stringify([url, identity]) : null;
+    if (this.sceneKey === key) {
+      this.renderStructuredMap();
+      return;
+    }
+    this.sceneRequest?.abort();
+    this.sceneKey = key;
+    this.mapScene = null;
+    this.renderStructuredMap();
+    if (url) void this.fetchStructuredMap(url, identity);
+  }
+
+  async fetchStructuredMap(url, identity) {
+    const request = new AbortController();
+    this.sceneRequest = request;
+    try {
+      const response = await fetch(url, { signal: request.signal, redirect: "error", cache: "no-store" });
+      const raw = response.ok ? await response.json() : null;
+      if (request.signal.aborted) return;
+      this.mapScene = decodeMapScene(raw, identity);
+      this.renderStructuredMap();
+    } catch (error) {
+      if (!(request.signal.aborted || error instanceof TypeError || error instanceof SyntaxError)) throw error;
+    } finally {
+      if (this.sceneRequest === request) this.sceneRequest = null;
+    }
+  }
+
+  renderStructuredMap() {
+    const canvas = this.part("structured-map");
+    const img = this.part("map");
+    const layer = this.part("map-layer");
+    const paintKey = JSON.stringify([this.config.color_scheme, this.calibration, img.naturalWidth, img.naturalHeight]);
+    const scene = this.mapPicking && img.complete ? this.mapScene : null;
+    this.structuredVisible = Boolean(scene && ((!canvas.hidden && this.paintedScene === scene && this.paintedKey === paintKey)
+      || paintScene(canvas, scene, this.calibration, img)));
+    this.paintedScene = this.structuredVisible ? scene : null;
+    this.paintedKey = paintKey;
+    canvas.hidden = !this.structuredVisible;
+    layer.classList.toggle("structured", this.structuredVisible);
+    layer.classList.toggle("room-picking", this.structuredVisible && this.mode === "room");
+  }
+
   update() {
     if (!this.config || !this.ha) return;
     this.updateLanguage();
@@ -1247,14 +1529,18 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const robotDevice = this.ha.entities?.[entity]?.device_id;
     const cameraDevice = this.ha.entities?.[map_camera]?.device_id;
     const relatedCamera = !(robotDevice && cameraDevice && robotDevice !== cameraDevice);
-    const liveMap = relatedCamera && online(camera) && map.selected !== false
+    const requestedFloor = String(this.pendingFloor);
+    const cameraConfirmed = !map_camera || (relatedCamera && online(camera) && map.selected !== false
+      && String(cameraMapId) === requestedFloor);
+    if (this.pendingFloor && String(activeMapId) === requestedFloor && cameraConfirmed) this.pendingFloor = null;
+    const liveMap = !this.pendingFloor && relatedCamera && online(camera) && map.selected !== false
       && (activeMapId == null || cameraMapId == null || String(activeMapId) === String(cameraMapId));
     const image = relatedCamera && online(camera) ? localImage(map.entity_picture) : null;
     const imageNode = this.part("map");
+    const display = this.config.map ?? {};
     this.part("figure").hidden = !image;
     if (image && imageNode.getAttribute("src") !== image) imageNode.setAttribute("src", image);
     if (image) {
-      const display = this.config.map ?? {};
       const [x, y] = display.offset ?? [0, 0];
       imageNode.style.transform = `translate(${x}px, ${y}px) rotate(${display.rotation ?? 0}deg) scale(${display.scale ?? 1})`;
       imageNode.style.transformOrigin = "center";
@@ -1264,10 +1550,19 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     this.calibration = image && liveMap ? map.calibration_points : null;
     this.currentMap = map;
+    const calibrated = Boolean(mapPoint(this.calibration, [0, 0]));
+    const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
+    this.mapPicking = calibrated && available && !transformed;
+    this.restrictions = this.mapPicking && !attrs.has_temporary_map && restrictionSnapshot(map, activeMapId, cameraMapId);
+    const pending = this.pendingRestriction;
+    if (pending?.finished && pending.expected && pending.expected === this.restrictions) this.pendingRestriction = null;
     const scope = JSON.stringify([entity, map_camera, activeMapId, attrs.selected_map, cameraMapId, this.calibration, available]);
     if (scope !== this.scope) {
       this.scope = scope;
       this.roomSelection.clear();
+      this.objectSelection = null;
+      this.editPickMode = null;
+      this.editSnapshot = null;
       this.clearPicks();
     }
 
@@ -1311,7 +1606,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     });
 
     const maps = Array.isArray(attrs.maps) ? attrs.maps.filter((entry) => Number.isSafeInteger(Number(entry?.id)) && Number(entry.id) > 0) : [];
-    this.section("floors", [maps, activeMapId, available, can(dreame("select_map"))], (node) => {
+    const canSwitchFloor = available && !this.pendingFloor && !this.pendingRestriction;
+    this.section("floors", [maps, activeMapId, canSwitchFloor, can(dreame("select_map"))], (node) => {
       node.replaceChildren();
       node.hidden = true;
       if (!maps.length || !can(dreame("select_map"))) return;
@@ -1320,10 +1616,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       placeholder.disabled = true;
       select.append(placeholder, ...maps.map(({ id, name }) => element("option", name || this.t("Map") + " " + id, { value: id })));
       select.value = maps.some((entry) => String(entry.id) === String(activeMapId)) ? String(activeMapId) : "";
-      select.disabled = !available;
+      select.disabled = !canSwitchFloor;
       const button = this.button(this.t("Switch floor"), () => {
-        if (select.value) void this.run(dreame("select_map"), { map_id: Number(select.value) });
-      }, !available);
+        if (select.value) void this.switchFloor(Number(select.value), activeMapId);
+      }, !canSwitchFloor);
       node.append(this.label(this.t("Floor"), select), button);
     });
 
@@ -1351,7 +1647,6 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     });
 
     const tools = TOOLS.filter(([, , action]) => can(action));
-    const calibrated = Boolean(mapPoint(this.calibration, [0, 0]));
     this.section("tools", [tools.map(([key]) => key), calibrated, available], (node) => {
       node.replaceChildren();
       this.sections.delete("zone-list");
@@ -1376,16 +1671,18 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const fields = element("div", null, { class: "row" });
       fields.append(...coords, this.button(this.t("Add coordinates"), () => {
         const xy = coords.map((input) => input.valueAsNumber);
-        if (xy.every(Number.isSafeInteger)) this.addPick(xy);
+        if (xy.every(Number.isSafeInteger) && !this.editPickMode) this.addPick(xy);
         else this.status("Enter two whole-number coordinates.", true);
       }, !available));
       const clear = this.button(this.t("Clear"), () => this.clearPicks());
       node.append(select, help, fields, clear, element("p", "", { id: "coordinates" }), element("div", null, { id: "zone-list", class: "row" }));
       this.showPicks();
     });
-    const display = this.config.map ?? {};
-    const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
-    this.mapPicking = calibrated && available && !transformed;
+    if (this.editPickMode && (this.editSnapshot !== this.restrictions || this.config.features?.editing === false)) {
+      this.cancelRestrictionEdit();
+      this.status("The map changed. Select the area again.", true);
+    }
+    this.loadStructuredMap(image, { floor: activeMapId ?? cameraMapId, mapId: map.map_id, frame: map.frame_id });
 
     const ids = deviceEntities(this.ha, this.config);
     const settingActions = ["button.press", "switch.turn_on", "switch.turn_off", "number.set_value",
@@ -1397,8 +1694,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.section("settings", [settingsSignature, settingActions], (node) => this.renderSettings(node, ids));
     this.renderMaintenance();
     this.renderMapObjects(map);
-    this.renderFloorEditor(map, available, activeMapId);
-    this.renderSchedulesAndShortcuts(ids, available);
+    this.renderObjectEditor();
+    this.renderSchedulesAndShortcuts(ids, attrs, available);
 
     const history = [["cleaning_history", "Cleaning history"], ["cruising_history", "Cruising history"]].map(([key, label]) => {
       const id = dreameEntity(this.ha, this.config, ids, "sensor", key);
@@ -1433,7 +1730,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const edits = EDITS.filter(([key]) => can(dreame(key))
       && (!key.endsWith("temporary_map") || attrs.has_temporary_map === true));
     this.part("edit-detail").hidden = this.config.features?.editing === false || !edits.length;
-    this.section("edit", [edits.map(([key]) => key), available, activeMapId], (node) => this.renderEdits(node, edits, available));
+    this.section("edit", [edits.map(([key]) => key), available, activeMapId, this.restrictions, this.canEditRestrictions()],
+      (node) => this.renderEdits(node, edits, available));
     this.renderNavigation(visibleRoomIds.size > 0, calibrated ? tools : [], available);
     this.syncRoomSelection();
     this.renderMenu(basic, available);
@@ -1453,9 +1751,17 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (pick) this.addPick(pick.coords, pick.pin);
       return;
     }
+    if (this.mode === "room" && this.structuredVisible) {
+      const pick = this.mapPointer(event);
+      if (!pick) return;
+      const pixel = scenePixel(this.mapScene, pick.coords);
+      if (isRoomFloor(pixel) && this.markerRooms.some(([room]) => room === pixel)) this.toggleRoom(pixel, !this.roomSelection.has(pixel));
+      return;
+    }
     if (this.part("tools").hidden || !this.selectedTool()) return;
     const pick = this.mapPointer(event);
-    if (pick) this.addPick(pick.coords, pick.pin);
+    if (!pick) return;
+    this.addPick(pick.coords, pick.pin);
   }
 
   mapPointer(event) {
@@ -1485,6 +1791,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.picks.push({ coords, pin });
       this.showPicks();
       this.renderObjectEditor();
+      return;
+    }
+    if (!this.canPickPoint(coords)) {
+      this.status("Choose a point on the mapped floor.", true);
       return;
     }
     const tool = this.selectedTool();
@@ -1596,10 +1906,19 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       })));
     });
     this.renderZones();
+    this.renderMapObjectLayers();
     this.updateTargetButton();
   }
 
+  canPickPoint(coords) {
+    return !this.structuredVisible || !["spot", "goto"].includes(this.mode) || cleanablePixel(scenePixel(this.mapScene, coords));
+  }
+
   async sendPicks() {
+    if (this.picks.some(({ coords }) => !this.canPickPoint(coords))) {
+      this.status("Choose a point on the mapped floor.", true);
+      return;
+    }
     const tool = this.selectedTool();
     if (this.mode === "spot") {
       if (!this.picks.length) return;
@@ -1694,47 +2013,13 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const rotation = element("input", null, { type: "range", min: "-180", max: "180", step: "5", value: "0" });
     const velocity = element("input", null, { type: "range", min: "-200", max: "200", step: "10", value: "0" });
     const form = element("form");
-    let timer;
-    const send = () => {
-      if (!available) return;
-      void this.run(action, { rotation: rotation.valueAsNumber, velocity: velocity.valueAsNumber });
-    };
-    const keyMap = { w: ["velocity", 200], s: ["velocity", -200], a: ["rotation", -180], d: ["rotation", 180], ArrowUp: ["velocity", 200], ArrowDown: ["velocity", -200], ArrowLeft: ["rotation", -180], ArrowRight: ["rotation", 180] };
-    const keydown = (event) => {
-      const mapped = keyMap[event.key];
-      if (!mapped || event.repeat) return;
-      event.preventDefault();
-      const input = mapped[0] === "velocity" ? velocity : rotation;
-      input.value = String(mapped[1] * ((event.shiftKey || event.ctrlKey) ? .5 : 1));
-      send();
-    };
-    const keyup = (event) => { if (keyMap[event.key]) stop(); };
-    node.addEventListener("keydown", keydown);
-    node.addEventListener("keyup", keyup);
-    const stop = () => {
-      clearInterval(timer);
-      timer = undefined;
-      rotation.value = "0";
-      velocity.value = "0";
-      send();
-    };
-    for (const control of [rotation, velocity]) {
-      control.addEventListener("input", () => {
-        if (!timer && available) {
-          send();
-          timer = setInterval(send, 250);
-        }
-      });
-      control.addEventListener("change", stop);
-      control.addEventListener("pointerup", stop);
-      control.addEventListener("blur", stop);
-    }
     form.className = "remote-live";
-    form.append(this.label("Rotation", rotation), this.label(this.t("Speed"), velocity));
+    form.append(this.label(this.t("Rotation"), rotation), this.label(this.t("Speed"), velocity));
     form.append(this.button(this.t("Move one step"), async () => {
       const sent = await this.run(action, { rotation: rotation.valueAsNumber, velocity: velocity.valueAsNumber });
       if (sent) { rotation.value = "0"; velocity.value = "0"; }
     }, !available));
+    form.addEventListener("submit", (event) => event.preventDefault());
     node.replaceChildren(form);
   }
 
@@ -1748,6 +2033,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const fill = () => {
       form.replaceChildren();
       const [key, title, fields] = edits.find(([value]) => value === select.value);
+      const restriction = key === "set_restricted_zone";
+      const snapshot = this.restrictions;
       for (const [name, type, required] of fields) {
         const input = element("input", null, { name, type: type === "int" ? "number" : "text" });
         input.required = Boolean(required);
@@ -1769,9 +2056,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
           values.confirm = ack.checked;
           const data = mapEditPayload(key, values);
           ack.checked = false;
-          await this.run(dreame(key), data);
+          if (restriction) await this.writeRestrictions(snapshot, data);
+          else await this.run(dreame(key), data);
         } catch (error) { this.status(error.message, true); }
-      }, !available));
+      }, !available || (restriction && !this.canEditRestrictions(snapshot))));
     };
     select.addEventListener("change", fill);
     form.addEventListener("submit", (event) => event.preventDefault());

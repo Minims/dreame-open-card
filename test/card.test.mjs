@@ -8,6 +8,57 @@ const calibration = [
   { map: { x: 0, y: 30 }, vacuum: { x: 0, y: 1000 } },
 ];
 
+test("structured map checks frame identity and resolves rooms by floor pixel", async () => {
+  const { decodeMapScene, scenePixel } = await import("../dreame-open-card.js");
+  const frame = { size: [100, 200, 100, 200, 4, 2, 50, 90, [0, 0, 0, 0]], saved_map_id: 7, map_id: 71, frame_id: 42,
+    data: { 1: [0, 0, 2], 2: [2, 0, 1], 255: [1, 1, 2], 512: [0, 0, 1] } };
+  const scene = decodeMapScene(frame, { floor: 7, frame: 42 });
+  assert.equal(scenePixel(scene, [124, 212]), 1);
+  assert.equal(scenePixel(scene, [224, 212]), 2);
+  assert.equal(scenePixel(scene, [174, 262]), 255);
+  assert.equal(scenePixel(scene, [299, 212]), 0);
+  assert.equal(scenePixel(scene, [99, 212]), 0);
+  assert.equal(decodeMapScene(frame, { floor: 8, frame: 42 }), null);
+  assert.equal(decodeMapScene(frame, { floor: 7, frame: 43 }), null);
+  assert.equal(decodeMapScene(frame, { floor: 7, mapId: 72, frame: 42 }), null);
+  assert.equal(decodeMapScene({ ...frame, data: { 1: [3, 0, 2] } }, { floor: 7, frame: 42 }), null);
+  assert.equal(decodeMapScene({ ...frame, data: { 1: [0, 0, 2], 2: [1, 0, 2] } }, { floor: 7, frame: 42 }), null);
+});
+
+test("structured map URLs preserve only the current camera authentication and version", async () => {
+  const { mapDataURL } = await import("../dreame-open-card.js");
+  assert.equal(mapDataURL("/api/camera_proxy/camera.eve_map?token=demo&v=42&resources=1", "camera.eve_map"),
+    "/api/camera_map_data_proxy/camera.eve_map?token=demo&v=42");
+  assert.equal(mapDataURL("/api/camera_proxy/camera.other?token=demo", "camera.eve_map"), null);
+  assert.equal(mapDataURL("/api/camera_proxy/camera.eve_map?token=demo", "camera.eve_map"), null);
+});
+
+test("structured maps exclude hidden and obstacle cells from targeting", async () => {
+  const { decodeMapScene, scenePixel, cleanablePixel } = await import("../dreame-open-card.js");
+  const size = [100, 200, 100, 200, 6, 1, 50];
+  const data = { 1: [0, 0, 1], 2: [1, 0, 1], 103: [5, 0, 1], 201: [2, 0, 1], 251: [3, 0, 1], 254: [4, 0, 1] };
+  assert.equal(decodeMapScene({ size, data, saved_map_id: 7, temporary_map: true }, { floor: 7 }), null);
+  const scene = decodeMapScene({ size, data, saved_map_id: 7, hidden_segments: [2] }, { floor: 7 });
+  assert.deepEqual([125, 175, 225, 275, 325, 375].map(x => cleanablePixel(scenePixel(scene, [x, 225]))),
+    [true, false, false, false, true, false]);
+});
+
+test("graphical restricted-area edits preserve all three lists and reject stale or incomplete maps", async () => {
+  const { restrictionSnapshot, appendRestriction } = await import("../dreame-open-card.js");
+  const attrs = { virtual_walls: [[0, 0, 3, 3]], no_go_areas: [[1, 2, 3, 4]], no_mopping_areas: [] };
+  const before = restrictionSnapshot(attrs, 7, 7);
+  assert.deepEqual(appendRestriction(before, before, "zones", [[8, 9], [5, 6]]),
+    { walls: [[0, 0, 3, 3]], zones: [[1, 2, 3, 4], [5, 6, 8, 9]], no_mops: [] });
+  assert.equal(restrictionSnapshot(attrs, 7, 8), null);
+  assert.equal(restrictionSnapshot({ ...attrs, virtual_walls: undefined }, 7, 7), null);
+  const changed = restrictionSnapshot({ ...attrs, virtual_walls: [] }, 7, 7);
+  assert.throws(() => appendRestriction(before, changed, "zones", [[8, 9], [5, 6]]), /changed/);
+  const area = { x0: 1, y0: 2, x1: 3, y1: 2, x2: 3, y2: 4, x3: 1, y3: 4 };
+  assert.equal(restrictionSnapshot({ ...attrs, no_go_areas: [area] }, 7, 7), before);
+  assert.equal(restrictionSnapshot({ ...attrs, no_go_areas: [{ ...area, angle: 15 }] }, 7, 7), null);
+  assert.equal(restrictionSnapshot({ ...attrs, no_go_areas: [[0, 0, 3, 1, 2, 4, -1, 3]] }, 7, 7), null);
+});
+
 test("converts rotated map coordinates including the origin", () => {
   assert.deepEqual(mapPoint(calibration, [10, 40]), [500, 500]);
   assert.deepEqual(mapPoint(calibration, [20, 30]), [0, 0]);
@@ -144,8 +195,12 @@ test("reads schedule and shortcut collections without inventing entries", async 
   const { scheduleEntries, shortcutEntries } = await import("../dreame-open-card.js");
   assert.deepEqual(scheduleEntries({ morning: { enabled: true, time: "07:30", days: [1, 3] }, bad: "ignored" }),
     [{ name: "morning", enabled: true, time: "07:30", days: [1, 3] }]);
+  assert.deepEqual(scheduleEntries([{ id: 17, enabled: true, invalid: true, time: "07:30" }]),
+    [{ name: "07:30", enabled: false, time: null, days: [] }]);
   assert.deepEqual(shortcutEntries({ quick: { tasks: [{ room: 1 }, { room: 2 }] }, bad: false }),
     [{ name: "quick", tasks: 2 }]);
+  assert.deepEqual(shortcutEntries({ 25: { id: 25, name: "Kitchen", tasks: [[{ segment_id: 2 }]] }, 12: { id: 12 } }),
+    [{ name: "12", tasks: null }, { id: 25, name: "Kitchen", tasks: 1 }]);
 });
 
 test("builds validated cleaning task payloads", () => {
@@ -169,8 +224,12 @@ test("builds complete map edit payloads and rejects unsafe edits", () => {
 
 test("checks coordinate rows before sending destructive map edits", () => {
   const confirmed = { confirm: true };
-  assert.throws(() => mapEditPayload("set_restricted_zone", { ...confirmed, zones: "[{\"x\":1}]" }), /zones/);
-  assert.throws(() => mapEditPayload("set_restricted_zone", { ...confirmed, walls: "[[0,1,2,4.2]]" }), /walls/);
+  const restrictions = { ...confirmed, walls: "[]", zones: "[]", no_mops: "[]" };
+  assert.throws(() => mapEditPayload("set_restricted_zone", { ...restrictions, no_mops: "" }), /Required field.*no_mops/);
+  assert.throws(() => mapEditPayload("set_restricted_zone", { ...restrictions, zones: "[{\"x\":1}]" }), /zones/);
+  assert.throws(() => mapEditPayload("set_restricted_zone", { ...restrictions, walls: "[[0,1,2,4.2]]" }), /walls/);
+  assert.doesNotThrow(() => mapEditPayload("set_restricted_zone", { ...restrictions, zones: "[[0,1,2,4,30]]" }));
+  assert.throws(() => mapEditPayload("set_restricted_zone", { ...restrictions, zones: "[[0,1,2,4],[0,1,2,4,30]]" }), /zones/);
   assert.throws(() => mapEditPayload("set_walls", { ...confirmed, doors: "[[0,1,2,3]]" }), /doors/);
   assert.throws(() => mapEditPayload("set_walls", { ...confirmed, walls: "{\"1\":[0,\"invalid\"]}" }), /walls/);
   assert.deepEqual(mapEditPayload("set_walls", { ...confirmed, doors: "[]" }), { doors: [] });
