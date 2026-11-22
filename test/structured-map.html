@@ -36,12 +36,16 @@
           schedule: [{ id: 1, enabled: true, time: "07:30" }] } },
         [camera]: { state: "idle", attributes: { saved_map_id: floor, map_id: floor * 10 + 1, frame_id: frame,
           entity_picture: `/api/camera_proxy/${camera}?v=${frame}`, calibration_points: calibration,
+          cruising_history_picture: { "Cruise fixture": `/api/camera_history_map_proxy/${camera}?v=1234` },
           virtual_walls: [[450, 250, 450, 650]], no_go_areas: [[200, 300, 300, 400]], no_mopping_areas: [],
           rooms: { 1: { name: "Living room", icon: "mdi:sofa-outline", x0: 150, x1: 400, y0: 250, y1: 650 },
             2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
+        "script.sweep": { state: "off", attributes: { friendly_name: "Sweep helper" } },
+        "script.quiet": { state: "off", attributes: { friendly_name: "Quiet helper" } },
       },
       services: {
         vacuum: { start: {}, return_to_base: {} },
+        script: { turn_on: {} },
         dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
           "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map"].map(name => [`vacuum_${name}`, {}])),
       },
@@ -239,6 +243,23 @@
       card.setConfig({ ...config, hidden_card_objects: ["state", "controls", "action_buttons"] });
       require(!el("title").hidden && el("state").hidden && el("modes").hidden && el("basic").hidden && el("quick").hidden,
         "Changing visibility settings left stale home controls");
+      card.setConfig(config);
+
+      const scripts = ["script.quiet", "script.sweep"];
+      card.setConfig({ ...config, scripts });
+      const shortcutNames = id => [...el(id).querySelectorAll("strong")].map(node => node.textContent);
+      require(shortcutNames("shortcuts").join() === "Quiet helper,Sweep helper,Kitchen"
+        && button("quick", "Shortcuts"), "Scripts did not appear first in the home shortcuts");
+      el("shortcuts").querySelector("button").click();
+      require(calls.at(-1)?.domain === "script" && calls.at(-1)?.service === "turn_on"
+        && calls.at(-1)?.target.entity_id === "script.quiet", "Shortcut did not target the configured script");
+
+      card.setConfig({ ...config, scripts, hidden_card_objects: ["shortcuts"] });
+      require(shortcutNames("shortcuts").join() === "Quiet helper,Sweep helper"
+        && shortcutNames("device-shortcuts").join() === "Kitchen", "Hiding native shortcuts hid scripts or removed device settings");
+      require(el("photos").querySelector("a")?.textContent === "Cruise fixture", "Cruise history fixture was not shown");
+      card.setConfig({ ...config, hidden_card_objects: ["cruising_history"] });
+      require(!el("photos").querySelector("a") && el("photos-detail").hidden, "Cruise history still appears when hidden");
       card.setConfig(config);
       require(!el("state").hidden && !el("modes").hidden && !el("basic").hidden && !el("quick").hidden,
         "Removing visibility settings does not restore the controls");

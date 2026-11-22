@@ -322,6 +322,8 @@ test("validates additive panel and map configuration", async () => {
   assert.equal(validateCardConfig({ map_config: { map_1: { opacity: .5, object_opacity: .4, hidden_objects: ["path"] } } }), true);
   assert.throws(() => validateCardConfig({ map_config: { map_0: {} } }), /map_config/i);
   assert.throws(() => validateCardConfig({ map_config: { map_1: { opacity: 1.1 } } }), /map_config/i);
+  assert.equal(validateCardConfig({ scripts: ["script.mop_kitchen", "script.sweep_living_room"] }), true);
+  assert.throws(() => validateCardConfig({ scripts: ["switch.kitchen"] }), /scripts/i);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {

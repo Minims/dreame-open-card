@@ -776,6 +776,10 @@ function validateMapPresentation(maps) {
 
 export function validateCardConfig(config = {}) {
   if (config.left_handed != null && typeof config.left_handed !== "boolean") throw new Error("left_handed must be a boolean.");
+  if (config.scripts != null && (!Array.isArray(config.scripts)
+    || !config.scripts.every((id) => typeof id === "string" && /^script\.[a-z0-9_]+$/.test(id)))) {
+    throw new Error("scripts must contain script entity IDs.");
+  }
   if (config.hidden_card_objects != null && (!Array.isArray(config.hidden_card_objects)
     || !config.hidden_card_objects.every((key) => typeof key === "string"))) throw new Error("hidden_card_objects must be a list of names.");
   if (config.hidden_objects != null && (!Array.isArray(config.hidden_objects)
@@ -1042,7 +1046,9 @@ const TEMPLATE = `
     <div id="floors" hidden></div>
   </div>
   <div id="views" hidden>
-  <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div></details>
+    <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div>
+      <details hidden><summary data-i18n>Shortcuts</summary><div id="device-shortcuts"></div></details>
+    </details>
   <details id="photos-detail" hidden><summary data-i18n>History and photos</summary><div id="photos"></div></details>
   <details id="maintenance-detail" hidden><summary data-i18n>Accessory usage</summary><div id="maintenance"></div></details>
   <details id="objects-detail" hidden><summary data-i18n>Map objects</summary><div id="objects"></div></details>
@@ -1543,7 +1549,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       ["maintenance-detail", "Accessory usage", "wrench-outline"],
       ["remote-detail", "Step-by-step remote control", "gamepad-variant-outline"], ["settings-detail", "Settings, dock and maintenance", "tune"]]
       .filter(([id]) => !this.part(id).hidden);
-    const quick = panels.filter(([id]) => !["maintenance-detail", "schedule-detail", "shortcut-detail"].includes(id));
+    const quick = panels.filter(([id]) => !["maintenance-detail", "schedule-detail"].includes(id));
     this.section("quick", quick, (node) => node.replaceChildren(...quick.map(([id, label, name]) =>
       this.iconButton(label, name, () => this.openView(id), { iconOnly: true }))));
     const locate = basic.find(([action]) => action === "vacuum.locate");
@@ -1649,16 +1655,21 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   renderCollectionPanel(id, entries, action) {
-    this.part(id === "schedules" ? "schedule-detail" : "shortcut-detail").hidden = !entries.length;
+    this.part(id).closest("details").hidden = !entries.length;
     this.section(id, [entries, action], (node) => {
-      node.replaceChildren(...entries.map(({ id: shortcutId, name, enabled, time, days, tasks }) => {
+      node.replaceChildren(...entries.map(({ id: shortcutId, script, runnable, name, enabled, time, days, tasks }) => {
         const row = element("div", null, { class: "history-row" });
         row.append(element("strong", name));
         if (time) row.append(element("small", `${this.t("Start time")}: ${time}`));
         if (Array.isArray(days) && days.length) row.append(element("small", `${this.t("Days")}: ${days.join(", ")}`));
         if (tasks !== undefined && tasks !== null) row.append(element("small", `${tasks} tasks`));
         if (enabled === false) row.append(element("small", this.t("Disabled")));
-        if (action && shortcutId != null) row.append(this.button(this.t("Run shortcut"),
+        if (script) {
+          const runScript = this.button(this.t("Run shortcut"), () => {
+            if (runScript.isConnected && this.config.scripts?.includes(script)) void this.run("script.turn_on", {}, script);
+          }, !runnable);
+          row.append(runScript);
+        } else if (action && shortcutId != null) row.append(this.button(this.t("Run shortcut"),
           () => this.run(action, { shortcut_id: shortcutId })));
         return row;
       }));
@@ -1672,7 +1683,14 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const shortcuts = shortcutEntries(attrs.shortcuts ?? this.ha.states[shortcut]?.attributes);
     this.renderCollectionPanel("schedules", schedules);
     const action = dreame("start_shortcut");
-    this.renderCollectionPanel("shortcuts", shortcuts, available && hasAction(this.ha, action) ? action : null);
+    const shortcutAction = available && hasAction(this.ha, action) ? action : null;
+    const hideNative = this.config.hidden_card_objects?.includes("shortcuts");
+    const scripts = (this.config.scripts ?? []).map((script) => {
+      const entity = this.ha.states[script];
+      return { script, name: caption(entity, script), runnable: online(entity) && hasAction(this.ha, "script.turn_on") };
+    });
+    this.renderCollectionPanel("shortcuts", hideNative ? scripts : [...scripts, ...shortcuts], shortcutAction);
+    this.renderCollectionPanel("device-shortcuts", hideNative ? shortcuts : [], shortcutAction);
   }
 
   renderRoomPreferences(node, roomIds, available) {
@@ -1956,13 +1974,15 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.renderObjectEditor();
     this.renderSchedulesAndShortcuts(ids, attrs, available);
 
-    const history = [["cleaning_history", "Cleaning history"], ["cruising_history", "Cruising history"]].map(([key, label]) => {
+    const historyTypes = [["cleaning_history", "Cleaning history"]];
+    if (!this.config.hidden_card_objects?.includes("cruising_history")) historyTypes.push(["cruising_history", "Cruising history"]);
+    const history = historyTypes.map(([key, label]) => {
       const id = dreameEntity(this.ha, this.config, ids, "sensor", key);
       const rows = historyEntries(this.ha.states[id]?.attributes, image ? map[`${key}_picture`] : null, map_camera);
       return [label, rows];
     }).filter(([, rows]) => rows.length);
     const joined = new Set(history.flatMap(([, rows]) => rows.map((row) => row.image)));
-    const pictures = image ? ["cleaning_history_picture", "cruising_history_picture", "obstacle_picture"]
+    const pictures = image ? [...historyTypes.map(([key]) => `${key}_picture`), "obstacle_picture"]
       .flatMap((key) => Object.entries(map[key] ?? {})).filter(([, url]) => localImage(url) && !joined.has(url)) : [];
     const recovery = image ? Object.entries(map.recovery_map_picture ?? {}).filter(([, url]) => localImage(url)) : [];
     const wifi = image && localImage(map.wifi_map_picture);
