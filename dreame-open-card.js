@@ -373,7 +373,7 @@ function paintScene(canvas, scene, calibration, presentation) {
   paintMapCells(ctx, scene, dark, { ...presentation, hidden });
   if (!hidden.has("path")) paintMapPaths(ctx, scene, presentation.colors.path ?? (dark ? "#c0edff" : "#178cb5"));
   ctx.globalAlpha = presentation.object_opacity ?? 1;
-  if (!hidden.has("furniture")) paintMapFurniture(ctx, scene, dark);
+  if (!hidden.has("furniture") && !hidden.has("furniture_image")) paintMapFurniture(ctx, scene, dark);
   paintMapPositions(ctx, scene, hidden);
   return true;
 }
@@ -1099,12 +1099,19 @@ const TEMPLATE = `
     left:50%; transform:translateX(-50%); min-width:26px; height:26px; box-sizing:border-box; padding:0 4px;
     border:2px solid white; border-radius:999px; background:var(--room-color);
     font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+  #map-layer.hide-room-name .room-label, #map-layer.hide-room-order .room-order { display:none; }
+  #map-layer.hide-room-order #room-markers button[data-order]::before { content:none; }
+  #map-layer.hide-room-background #room-markers button { background:transparent; border-color:transparent; }
+  #map-layer.hide-room-background #room-markers button[data-order]::after { content:none; }
+  #map-layer.hide-room-name #room-markers .room-icon { display:block; }
   #object-markers { position:absolute; inset:0; pointer-events:none; opacity:var(--map-object-opacity,1); }
   #object-markers button { position:absolute; transform:translate(-50%,-50%) rotate(var(--map-counter-rotation,0deg)); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
   #object-markers button:has(.obstacle-label) { display:flex; align-items:center; gap:4px; padding:4px; }
   #object-markers button[aria-pressed="false"] .obstacle-label { display:none; }
+  .simple-obstacle #object-markers button[aria-pressed="false"]:has(.obstacle-label) {
+    width:28px; height:28px; justify-content:center; border:0; border-radius:50%; }
   #object-markers button ha-icon { --mdc-icon-size:16px; width:16px; height:16px; }
   #map-objects, #map-objects svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
@@ -1475,9 +1482,11 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       .filter(({ kind }) => !hidden.has(hiddenByKind[kind]));
     target.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || !markers.length;
     if (target.hidden) return;
-    this.section("object-markers", markers, (node) => node.replaceChildren(...markers.map((marker) => {
+    const furnitureIcons = hidden.has("furniture_image");
+    this.section("object-markers", [markers, furnitureIcons], (node) => node.replaceChildren(...markers.map((marker) => {
       const obstacle = marker.kind === "obstacles";
-      const button = this.button(obstacle ? null : marker.label, () => {
+      const furnitureIcon = marker.kind === "furniture" && furnitureIcons;
+      const button = this.button(obstacle || furnitureIcon ? null : marker.label, () => {
         if (obstacle && button.getAttribute("aria-pressed") === "true") return this.openObstacle(marker);
         this.objectSelection = marker;
         for (const sibling of node.children) sibling.setAttribute("aria-pressed", String(sibling === button));
@@ -1486,6 +1495,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (obstacle) {
         button.setAttribute("aria-label", marker.label);
         button.append(icon("alert-circle-outline"), element("span", marker.label, { class: "obstacle-label" }));
+      } else if (furnitureIcon) {
+        button.setAttribute("aria-label", marker.label);
+        button.append(icon("sofa-outline"));
       }
       button.dataset.object = `${marker.kind}:${marker.key}`;
       button.setAttribute("aria-pressed", String(this.objectSelection?.kind === marker.kind && this.objectSelection?.key === marker.key));
@@ -1980,6 +1992,11 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     layer.style.transform = this.mapRotation ? `rotate(${this.mapRotation}deg)` : "";
     layer.style.setProperty("--map-counter-rotation", `${-(this.mapRotation ?? 0)}deg`);
     const presentation = mapPresentation(this.config, this.mapIndex);
+    const hidden = new Set(presentation.hidden_objects ?? []);
+    for (const [flag, className] of [["name", "hide-room-name"], ["name_background", "hide-room-background"],
+      ["order", "hide-room-order"], ["obstacle_background", "simple-obstacle"]]) {
+      layer.classList.toggle(className, hidden.has(flag));
+    }
     const { dark, ...overrides } = this.config.override_colors ?? {};
     const colors = { ...overrides, ...(this.ha?.themes?.darkMode ? dark : {}) };
     const rooms = colors.segment ? this.currentMap?.rooms : undefined;

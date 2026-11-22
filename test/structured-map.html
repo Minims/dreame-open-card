@@ -131,6 +131,10 @@
       require(obstacleDialog.open && !el("obstacle-photo").hasAttribute("src") && !el("obstacle-no-photo").hidden,
         "An obstacle without a safe matching photo did not show the missing-photo state");
       obstacleDialog.close();
+      card.setConfig({ ...config, hidden_objects: ["obstacle_background"] });
+      const roundMarker = el("object-markers").querySelector('[data-object="obstacles:1"]');
+      require(getComputedStyle(roundMarker).borderRadius === "50%", "Hidden obstacle backgrounds did not use a simple circular icon");
+      card.setConfig(config);
       card.hass = fixtureHass;
       const setError = error => {
         const state = fixtureHass.states[vacuum];
@@ -211,6 +215,21 @@
       update();
       card.setConfig(config);
       await waitFor(() => !canvas.hidden);
+      update(42, 7, { furniture: [{ type: "Bed", x0: 630, y0: 500, x1: 730, y1: 620 }] });
+      card.setConfig({ ...config, hidden_objects: ["name", "name_background", "order", "furniture_image"] });
+      button("modes", "Rooms").click();
+      const hiddenName = el("room-markers").querySelector('[data-room="1"]');
+      hiddenName.click();
+      require(getComputedStyle(hiddenName.querySelector(".room-label")).display === "none"
+        && getComputedStyle(hiddenName.querySelector(".room-order")).display === "none"
+        && getComputedStyle(hiddenName).backgroundColor === "rgba(0, 0, 0, 0)"
+        && hiddenName.getAttribute("aria-label") === "Living room",
+        "Room visibility flags did not hide labels and order while keeping an accessible marker");
+      require(canvas.getContext("2d").getImageData(282, 87, 1, 1).data[0] < (dark ? 135 : 210),
+        "furniture_image did not hide the rendered furniture silhouette");
+      require(el("object-markers").querySelector('[data-object="furniture:0"] ha-icon'), "Furniture without its silhouette lost its marker");
+      update();
+      card.setConfig(config);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
       const expected = dark ? [66, 99, 140, 255] : [164, 194, 244, 255];
       require(room.every((channel, i) => Math.abs(channel - expected[i]) <= 2), "Room does not render in its configured palette");

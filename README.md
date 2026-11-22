@@ -57,6 +57,7 @@ Set `aspect_ratio` to the desired map frame width divided by height (between `0.
 Add Home Assistant `script.*` entities under `scripts` to list them in YAML order before the native shortcuts. When `hidden_card_objects` includes `shortcuts`, scripts remain on the home screen and native shortcuts move to the device settings panel.
 
 Use `hidden_objects` to hide supported map layers: `floor`, `walls`, `material`, `path`, `carpet`, `charger`, `vacuum`, `furniture`, `obstacle`, `doors`, `no_go`, `no_mop`, `virtual_wall`, `virtual_threshold`, `passable_threshold`, and `impassable_threshold`. Layers already drawn into the fallback camera image cannot be removed. Restrictions stay visible while the map editor is open.
+Use `name`, `name_background` or `order` to simplify room markers, `obstacle_background` for circular obstacle icons, and `furniture_image` to replace furniture silhouettes with icons when the camera supplies furniture positions.
 
 `map_config.map_1` applies to the first saved-map index, not map ID 1. For each index, `opacity` sets the map image opacity, `object_opacity` sets the opacity of the robot, dock, furniture and markers, and `hidden_objects` replaces the global list for that floor. Both opacities range from 0 to 1.
 Set `rotation` to `0`, `90`, `180` or `270` to override the floor's native display angle without moving map targets. This is separate from the legacy top-level `map.rotation`, which disables map picking when nonzero.
