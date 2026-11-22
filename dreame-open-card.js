@@ -138,6 +138,8 @@ const FRENCH = {
   "Choose a floor": "Choisir un étage",
   "Map": "Carte",
   "Switch floor": "Changer d’étage",
+  "Confirm floor change": "Confirmer le changement d’étage",
+  "Cancel": "Annuler",
   "Floor": "Étage",
   "Rooms": "Pièces",
   "Clean rooms": "Nettoyer les pièces",
@@ -1007,6 +1009,9 @@ const TEMPLATE = `
     border:1px solid var(--divider-color,#d9d9d9); border-radius:20px 20px 0 0; padding:16px;
     color:inherit; background:var(--card-background-color,#fff); }
   #dock-dialog::backdrop { background:#0006; }
+  #floor-dialog { color:inherit; background:var(--card-background-color,#fff); border:1px solid var(--divider-color,#ddd);
+    border-radius:16px; max-width:calc(100% - 32px); }
+  #floor-dialog::backdrop { background:#0006; }
   #dock-dialog header { display:flex; align-items:center; justify-content:space-between; padding:0; }
   .dock-status, .dock-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
   .dock-actions { grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); }
@@ -1110,6 +1115,14 @@ const TEMPLATE = `
     <div id="dock-content"></div>
     <output id="dock-result" role="status"></output>
   </dialog>
+  <dialog id="floor-dialog" aria-labelledby="floor-heading">
+    <h2 id="floor-heading" data-i18n>Confirm floor change</h2>
+    <p id="floor-warning"></p>
+    <form method="dialog" class="row">
+      <button value="cancel" autofocus data-i18n>Cancel</button>
+      <button value="confirm" class="primary" data-i18n>Switch floor</button>
+    </form>
+  </dialog>
 </div></ha-card>`;
 
 function element(tag, text, attrs = {}) {
@@ -1138,6 +1151,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const map = this.part("map");
     map.addEventListener("click", (event) => this.pickOnMap(event));
     this.part("editor-detail").addEventListener("toggle", () => this.renderMapObjectLayers());
+    this.part("floor-dialog").addEventListener("close", () => this.confirmFloorChange());
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -1565,10 +1579,34 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   async switchFloor(floor, activeFloor) {
     if (this.pendingFloor || this.pendingRestriction || String(floor) === String(activeFloor)) return;
+    const vacuum = this.ha.states[this.config.entity];
+    const maps = vacuum?.attributes?.maps;
+    if (!online(vacuum) || !hasAction(this.ha, dreame("select_map"))
+      || !Array.isArray(maps) || !maps.some((map) => Number(map?.id) === floor)) return;
     this.pendingFloor = floor;
     this.cancelRestrictionEdit();
     this.update();
     await this.run(dreame("select_map"), { map_id: floor });
+  }
+
+  requestFloorChange(floor, activeFloor, label) {
+    if (this.pendingFloor || this.pendingRestriction || String(floor) === String(activeFloor)) return;
+    if (this.config.hidden_card_objects?.includes("map_change_confirmation")) return this.switchFloor(floor, activeFloor);
+    const dialog = this.part("floor-dialog");
+    if (dialog.open) return;
+    this.floorChangePrompt = { floor, activeFloor, entity: this.config.entity };
+    this.part("floor-warning").textContent = label;
+    dialog.returnValue = "";
+    dialog.showModal();
+  }
+
+  confirmFloorChange() {
+    const prompt = this.floorChangePrompt;
+    this.floorChangePrompt = null;
+    if (!prompt || this.part("floor-dialog").returnValue !== "confirm" || prompt.entity !== this.config.entity) return;
+    const activeFloor = this.ha.states[prompt.entity]?.attributes?.selected_map_id;
+    if (String(activeFloor) !== String(prompt.activeFloor)) return;
+    void this.switchFloor(prompt.floor, activeFloor);
   }
 
   updateTargetButton() {
@@ -1903,9 +1941,14 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.clearPicks();
     }
 
-    this.part("title").textContent = title || caption(vacuum, "Dreame");
+    const device = this.ha.devices?.[robotDevice];
+    const deviceName = (device?.name_by_user || device?.name)?.trim();
+    const vacuumName = caption(vacuum, "Dreame");
+    const repeatedDeviceName = deviceName && vacuumName.trim().replace(/\s+/g, " ")
+      === `${deviceName} ${deviceName}`.replace(/\s+/g, " ");
+    this.part("title").textContent = title || (repeatedDeviceName ? deviceName : vacuumName);
     const state = vacuum?.state ?? "unavailable";
-    const error = typeof attrs.error === "string" && !/^(none|no_error|unknown|ok)$/i.test(attrs.error) ? attrs.error : null;
+    const error = typeof attrs.error === "string" && !/^(none|no[ _]error|unknown|ok)$/i.test(attrs.error.trim()) ? attrs.error : null;
     const faults = Object.values(attrs.faults ?? {}).filter((fault) => typeof fault === "string");
     this.part("state").textContent = [this.t(STATE_LABELS[state] ?? state),
       ...new Set([error, ...faults]), !relatedCamera ? this.t("Camera belongs to another device") : null].filter(Boolean).join(" · ");
@@ -1955,7 +1998,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       select.value = maps.some((entry) => String(entry.id) === String(activeMapId)) ? String(activeMapId) : "";
       select.disabled = !canSwitchFloor;
       const button = this.button(this.t("Switch floor"), () => {
-        if (select.value) void this.switchFloor(Number(select.value), activeMapId);
+        if (select.value) void this.requestFloorChange(Number(select.value), activeMapId, select.selectedOptions[0]?.textContent);
       }, !canSwitchFloor);
       node.append(this.label(this.t("Floor"), select), button);
     });

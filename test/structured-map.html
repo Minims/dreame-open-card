@@ -79,6 +79,33 @@
     try {
       const canvas = el("structured-map");
       await waitFor(() => !canvas.hidden);
+      const fixtureHass = card.ha;
+      const setRobotName = friendly_name => {
+        const state = fixtureHass.states[vacuum];
+        card.hass = { ...fixtureHass, entities: { [vacuum]: { device_id: "eve" } },
+          devices: { eve: { name: "Eve ", name_by_user: null } },
+          states: { ...fixtureHass.states, [vacuum]: { ...state, attributes: { ...state.attributes, friendly_name } } } };
+      };
+      setRobotName("Eve   Eve ");
+      require(el("title").textContent === "Eve", "The device name is repeated in the card title");
+      card.setConfig({ ...config, title: "Eve Eve" });
+      require(el("title").textContent === "Eve Eve", "The explicit YAML title was changed");
+      card.setConfig(config);
+      setRobotName("Eve Upstairs");
+      require(el("title").textContent === "Eve Upstairs", "A distinct vacuum name was replaced by the device name");
+      card.hass = fixtureHass;
+      const setError = error => {
+        const state = fixtureHass.states[vacuum];
+        card.hass = { ...fixtureHass, states: {
+          ...fixtureHass.states, [vacuum]: { ...state, attributes: { ...state.attributes, error } },
+        } };
+      };
+      const dockedState = el("state").textContent;
+      setError("No error");
+      require(el("state").textContent === dockedState, "A no-error value appears as a fault in the status");
+      setError("Brush stuck");
+      require(el("state").textContent.includes("Brush stuck"), "A real vacuum error was hidden");
+      card.hass = fixtureHass;
       require(canvas.getBoundingClientRect().right <= el("figure").getBoundingClientRect().right + 1,
         "Map is clipped horizontally");
       const overlay = el("map-objects").querySelector("svg").getBoundingClientRect();
@@ -202,7 +229,26 @@
       const stale = button("editor", "Apply map object");
       el("editor").querySelector("input").click();
       el("floors").querySelector("select").value = "8";
+      const beforeFloorPrompt = calls.length;
       button("floors", "Switch floor").click();
+      const floorDialog = el("floor-dialog");
+      require(floorDialog?.open && calls.length === beforeFloorPrompt, "Floor switch did not wait for confirmation");
+      floorDialog.close("cancel");
+      await new Promise(requestAnimationFrame);
+      require(calls.length === beforeFloorPrompt, "Canceling floor confirmation sent a command");
+      button("floors", "Switch floor").click();
+      const floorHass = card.ha, floorState = floorHass.states[vacuum];
+      card.hass = { ...floorHass, states: { ...floorHass.states,
+        [vacuum]: { ...floorState, attributes: { ...floorState.attributes, maps: [{ id: 7, name: "Downstairs" }] } },
+      } };
+      floorDialog.close("confirm");
+      await new Promise(requestAnimationFrame);
+      require(calls.length === beforeFloorPrompt, "Confirmation tried to switch to a floor no longer listed");
+      card.hass = floorHass;
+      el("floors").querySelector("select").value = "8";
+      button("floors", "Switch floor").click();
+      floorDialog.close("confirm");
+      await waitFor(() => calls.length > beforeFloorPrompt);
       require(calls.at(-1)?.payload.map_id === 8, "Floor switch did not submit the destination floor");
       const beforeLocalSwitch = calls.length;
       stale.click();
@@ -322,6 +368,12 @@
       const primary = [...el("basic").querySelectorAll("button")].filter(node => node.getBoundingClientRect().width);
       require(primary.length === 2 && Math.abs(primary[0].getBoundingClientRect().top - primary[1].getBoundingClientRect().top) <= 1,
         "Primary actions do not share a row on the narrow French card");
+      card.setConfig({ ...config, hidden_card_objects: ["map_change_confirmation"] });
+      el("floors").querySelector("select").value = "8";
+      const beforeDirectSwitch = calls.length;
+      el("floors").querySelector("button").click();
+      require(!floorDialog.open && calls.length === beforeDirectSwitch + 1 && calls.at(-1).payload.map_id === 8,
+        "map_change_confirmation did not skip the optional floor dialog");
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
       output.value = `FAIL: ${error.message}`;

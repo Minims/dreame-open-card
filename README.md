@@ -80,6 +80,7 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 
 - Start, pause, stop, return to dock, locate and see the battery level.
 - Clean rooms, zones or spots, send the robot to a point and switch floors. Map selection requires a live map camera with calibration data.
+  Floor changes ask for confirmation by default. Add `map_change_confirmation` to `hidden_card_objects` to switch floors without the prompt.
 - In room mode, select labeled markers, tap room pixels in structured mode, or use the checklist. Structured mode shows colored room badges with icons. Selected rooms get a checkmark and an order number, which updates when you deselect a room. The robot may choose a different cleaning order. Markers require room bounds, a matching map and no display transform.
 - In zone mode, pick two opposite corners per zone. Drag either numbered handle or focus it and use the arrow keys to resize the zone. Remove zones individually below the map. The card sends the remaining zones together; it does not detect walls or cleanable floor.
 - Open the station sheet to see available tank and bag statuses, start or stop supported wash and dry cycles, or trigger auto-empty. The card falls back to a return-to-dock button if no station entities are found.
