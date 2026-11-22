@@ -302,6 +302,20 @@
       const texture = canvas.getContext("2d").getImageData(201, 142, 1, 1).data;
       const tile = canvas.getContext("2d").getImageData(212, 142, 1, 1).data;
       require(texture.some((channel, i) => Math.abs(channel - tile[i]) > 6), "Tile material does not render its seam");
+      card.setConfig({ ...config, map_display: "floor_plan_without_texture" });
+      await waitFor(() => !canvas.hidden);
+      const noTexture = canvas.getContext("2d").getImageData(201, 142, 1, 1).data;
+      const noTile = canvas.getContext("2d").getImageData(212, 142, 1, 1).data;
+      require(noTexture.every((channel, i) => Math.abs(channel - noTile[i]) <= 2),
+        "floor_plan_without_texture rendered material texture seams");
+      require(el("map-objects").querySelector("line.physical-wall"), "floor_plan_without_texture lost physical walls");
+      card.setConfig({ ...config, map_display: "floor_plan_only" });
+      await waitFor(() => !canvas.hidden);
+      const wallOnlyRoom = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
+      require(wallOnlyRoom[3] === 0, "floor_plan_only filled room floor colors");
+      require(el("map-objects").querySelector("line.physical-wall"), "floor_plan_only lost physical walls");
+      card.setConfig(config);
+      await waitFor(() => !canvas.hidden);
       const bed = canvas.getContext("2d").getImageData(282, 87, 1, 1).data;
       require(bed[0] > (dark ? 135 : 210) && bed[1] > (dark ? 135 : 210), "Known furniture does not render a light silhouette");
       const pixel = (x, y) => canvas.getContext("2d").getImageData(x, y, 1, 1).data;

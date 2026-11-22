@@ -313,6 +313,9 @@ test("validates additive panel and map configuration", async () => {
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", map: { scale: 0 } }), /scale/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", map: { offset: [1] } }), /offset/i);
   assert.equal(validateCardConfig({ entity: "vacuum.bot", color_scheme: "dreame_dark", icon_set: "material", locked: "only_touch" }), true);
+  assert.equal(validateCardConfig({ entity: "vacuum.bot", map_display: "floor_plan_without_texture" }), true);
+  assert.equal(validateCardConfig({ entity: "vacuum.bot", map_display: "floor_plan_only" }), true);
+  assert.throws(() => validateCardConfig({ entity: "vacuum.bot", map_display: "invalid_mode" }), /map_display/);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", color_scheme: "unknown" }), /color_scheme/i);
   assert.throws(() => validateCardConfig({ entity: "vacuum.bot", icon_set: "unknown" }), /icon_set/i);
   assert.equal(validateCardConfig({ entity: "vacuum.bot", locked: "always", touch_lock: 200, disable_haptic: true }), true);

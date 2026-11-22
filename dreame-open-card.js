@@ -360,21 +360,24 @@ function fillMapRuns(ctx, runs) {
 }
 
 function paintMapCells(ctx, scene, dark, placement) {
-  const { colors, hidden } = placement;
+  const { colors, hidden, display } = placement;
   const palette = ROOM_COLORS[dark ? "dark" : "light"];
   const patterns = new Map();
+  const wallsOnly = display === "floor_plan_only";
+  const noTexture = display === "floor_plan_without_texture" || wallsOnly;
   for (const [key, runs] of scene.layers) {
     const type = Number(key);
     const room = roomPixel(type);
     const wall = [251, 255].includes(type) || (type > 100 && type < 200);
     if ((type >= 200 && type <= 232) || scene.hiddenRooms.has(room)
+      || (wallsOnly && !wall)
       || hidden.has(wall ? "walls" : type === 512 ? "carpet" : "floor")) continue;
     if (type === 512) ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = type === 512 ? colors.carpet ?? "#b891574d" : wall ? colors.wall ?? (dark ? "#96a6bb" : "#47566a")
       : isRoomFloor(type) ? paintedRoomColor(room, palette, placement) : colors.floor ?? (dark ? "#46515e" : "#cfdae5");
     fillMapRuns(ctx, runs);
     const material = scene.materials?.[type];
-    if (hidden.has("material") || !isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
+    if (noTexture || hidden.has("material") || !isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
     if (!patterns.has(material)) patterns.set(material, floorPattern(ctx, material, dark));
     ctx.fillStyle = patterns.get(material);
     fillMapRuns(ctx, runs);
@@ -918,7 +921,7 @@ export function validateCardConfig(config = {}) {
     || !config.hidden_objects.every((key) => typeof key === "string"))) throw new Error("hidden_objects must be a list of names.");
   if (config.map_config != null) validateMapPresentation(config.map_config);
   if (config.override_colors != null) validateOverrideColors(config.override_colors);
-  if (config.map_display != null && !["standard", "structured", "floor_plan"].includes(config.map_display)) throw new Error("map_display is invalid.");
+  if (config.map_display != null && !["standard", "structured", "floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(config.map_display)) throw new Error("map_display is invalid.");
   if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
   const map = config.map ?? {};
   if (map.scale != null && (!Number.isFinite(map.scale) || map.scale <= 0)) throw new Error("map.scale must be positive.");
@@ -1690,7 +1693,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       polygons.push(...rectangles([draft], this.editPickMode === "no_mops" ? "restricted mop draft" : "restricted draft"));
     }
     const lines = [
-      ...(this.structuredVisible && this.config.map_display === "floor_plan" && !hidden.has("walls")
+      ...(this.structuredVisible && ["floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(this.config.map_display) && !hidden.has("walls")
         ? wallLines(this.mapScene.walls, "physical-wall") : []),
       ...(hidden.has("virtual_wall") ? [] : wallLines(attrs.virtual_walls, "wall")),
       ...(hidden.has("virtual_threshold") ? [] : wallLines(attrs.virtual_thresholds, "threshold")),
@@ -2084,7 +2087,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   loadStructuredMap(image, identity, camera) {
     const { background_image, overlay_image } = mapPresentation(this.config, this.mapIndex);
-    const canvasMode = ["structured", "floor_plan"].includes(this.config.map_display);
+    const canvasMode = ["structured", "floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(this.config.map_display);
     const url = this.isConnected && (canvasMode || background_image || overlay_image) && this.mapPicking
       && identity.floor != null && identity.frame != null ? mapDataURL(image, camera) : null;
     const key = url ? JSON.stringify([url, identity]) : null;
@@ -2136,13 +2139,14 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const selected = this.roomSelection;
     const paintKey = JSON.stringify([this.config.color_scheme, this.config.map_display, this.calibration, img.naturalWidth, img.naturalHeight,
       presentation, colors, rooms, colors.segment ? [...selected] : null]);
+    const isFloorPlan = ["floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(this.config.map_display);
     const scene = this.mapPicking && img.complete && (this.config.map_display === "structured"
-      || (this.config.map_display === "floor_plan" && this.mapScene?.walls.length))
+      || (isFloorPlan && this.mapScene?.walls.length))
       ? this.mapScene : null;
     const previous = this.paintedScene;
     const previousKey = this.paintedKey;
     this.structuredVisible = Boolean(scene && ((!canvas.hidden && this.paintedScene === scene && this.paintedKey === paintKey)
-      || paintScene(canvas, scene, this.calibration, { ...presentation, image: img, colors, rooms, selected })));
+      || paintScene(canvas, scene, this.calibration, { ...presentation, display: this.config.map_display, image: img, colors, rooms, selected })));
     this.paintedScene = this.structuredVisible ? scene : null;
     this.paintedKey = paintKey;
     canvas.hidden = !this.structuredVisible;
