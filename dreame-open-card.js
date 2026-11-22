@@ -637,7 +637,11 @@ export function mapObjectMarkers(attributes, calibration, width, height) {
     const position = project(point);
     if (position) markers.push({ kind, key, label: label ?? key, x: position[0], y: position[1] });
   };
-  for (const [key, object] of Object.entries(attributes?.obstacles ?? {})) addPoint("obstacles", key, [object?.x, object?.y], object?.type);
+  for (const [key, object] of Object.entries(attributes?.obstacles ?? {})) {
+    const label = [object?.type, object?.possibility != null ? `%${object.possibility}` : null,
+      object?.room ? `(${object.room})` : null].filter(Boolean).join(" ");
+    addPoint("obstacles", key, [object?.x, object?.y], label || object?.type);
+  }
   for (const [index, rectangle] of (attributes?.carpets ?? []).entries()) {
     if (Array.isArray(rectangle) && rectangle.length === 4 && rectangle.every(Number.isSafeInteger)
       && rectangle[0] !== rectangle[2] && rectangle[1] !== rectangle[3]) {
@@ -1077,7 +1081,8 @@ const TEMPLATE = `
   #obstacle-dialog::backdrop { background:#0008; backdrop-filter:blur(4px); }
   #obstacle-dialog header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0; text-align:start; }
   #obstacle-photo { width:100%; max-height:70dvh; object-fit:contain; }
-  #obstacle-no-photo { display:grid; place-items:center; min-height:160px; color:var(--secondary-text-color,#555); }
+  #obstacle-no-photo { display:grid; place-items:center; gap:8px; min-height:160px; color:var(--secondary-text-color,#555); }
+  #obstacle-no-photo ha-icon { --mdc-icon-size:48px; width:48px; height:48px; opacity:0.6; }
   @media (max-width:600px) {
     #obstacle-dialog { margin:auto auto 0; border-radius:16px 16px 0 0; }
   }
@@ -1223,7 +1228,7 @@ const TEMPLATE = `
   <dialog id="obstacle-dialog" aria-labelledby="obstacle-heading">
     <header><h2 id="obstacle-heading"></h2><form method="dialog"><button data-i18n>Close</button></form></header>
     <img id="obstacle-photo" alt="" hidden>
-    <p id="obstacle-no-photo" data-i18n>No obstacle photo available</p>
+    <div id="obstacle-no-photo"><ha-icon icon="mdi:image-off-outline" aria-hidden="true"></ha-icon><span data-i18n>No obstacle photo available</span></div>
   </dialog>
 </div></ha-card>`;
 
