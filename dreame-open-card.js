@@ -791,6 +791,9 @@ function validateMapPresentation(maps) {
       throw new Error("map_config is invalid.");
     }
     if (floor.rotation != null && ![0, 90, 180, 270].includes(floor.rotation)) throw new Error(`map_config.${key}.rotation is invalid.`);
+    for (const name of ["background_image", "overlay_image"]) {
+      if (floor[name] != null) validateMapAsset(floor[name], `map_config.${key}.${name}`);
+    }
     for (const name of ["opacity", "object_opacity"]) {
       if (floor[name] != null && (!Number.isFinite(floor[name]) || floor[name] < 0 || floor[name] > 1)) {
         throw new Error(`map_config.${key}.${name} must be between 0 and 1.`);
@@ -798,6 +801,18 @@ function validateMapPresentation(maps) {
     }
     if (floor.hidden_objects != null && (!Array.isArray(floor.hidden_objects)
       || !floor.hidden_objects.every((item) => typeof item === "string"))) throw new Error("map_config hidden_objects is invalid.");
+  }
+}
+
+function validateMapAsset(asset, name) {
+  const url = typeof asset?.url === "string" && asset.url;
+  if (!url || !url.startsWith("/local/") || !url.slice(7).split("?", 1)[0].split("/")
+    .every((part) => /^[\w.-]+$/.test(part) && part !== "." && part !== "..")) throw new Error(`${name}.url must be a /local/ image.`);
+  for (const key of ["left", "top", "width", "height", "opacity"]) {
+    const number = asset[key];
+    if (number == null) continue;
+    if (!Number.isFinite(number) || (["width", "height"].includes(key) && number <= 0)
+      || (key === "opacity" && (number < 0 || number > 1))) throw new Error(`${name}.${key} is invalid.`);
   }
 }
 
@@ -990,7 +1005,9 @@ const TEMPLATE = `
   :is(.full-height, .ratio-frame) #map { width:100%; max-width:100%; max-height:none; }
   figure.quarter-turn #map-layer { max-width:none; width:min(100cqh,calc(100cqw * var(--map-image-ratio,1))); }
   figure.quarter-turn #map { width:100%; max-width:none; max-height:none; }
-  #map-layer #map { opacity:var(--map-opacity,1); }
+  #map-layer #map { position:relative; opacity:var(--map-opacity,1); }
+  #map-layer .map-art { position:absolute; pointer-events:none; max-width:none; max-height:none; object-fit:fill;
+    transform:translate(-50%,-50%) rotate(var(--art-angle,0deg)); }
   #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-layer.structured #map { opacity:0; }
   #map-layer.room-picking #map { cursor:crosshair; }
@@ -1125,7 +1142,12 @@ const TEMPLATE = `
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
-    <figure id="figure" hidden><div id="map-frame"><div id="map-layer"><img id="map" alt="Robot map"><canvas id="structured-map" aria-hidden="true" hidden></canvas><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></div></figure>
+    <figure id="figure" hidden><div id="map-frame"><div id="map-layer">
+      <img id="map-background" class="map-art" alt="" hidden>
+      <img id="map" alt="Robot map"><canvas id="structured-map" aria-hidden="true" hidden></canvas>
+      <img id="map-foreground" class="map-art" alt="" hidden>
+      <div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div>
+    </div></div></figure>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -1916,7 +1938,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   loadStructuredMap(image, identity, camera) {
-    const url = this.isConnected && ["structured", "floor_plan"].includes(this.config.map_display) && this.mapPicking
+    const { background_image, overlay_image } = mapPresentation(this.config, this.mapIndex);
+    const canvasMode = ["structured", "floor_plan"].includes(this.config.map_display);
+    const url = this.isConnected && (canvasMode || background_image || overlay_image) && this.mapPicking
       && identity.floor != null && identity.frame != null ? mapDataURL(image, camera) : null;
     const key = url ? JSON.stringify([url, identity]) : null;
     if (this.sceneKey === key) {
@@ -1962,7 +1986,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const selected = this.roomSelection;
     const paintKey = JSON.stringify([this.config.color_scheme, this.config.map_display, this.calibration, img.naturalWidth, img.naturalHeight,
       presentation, colors, rooms, colors.segment ? [...selected] : null]);
-    const scene = this.mapPicking && img.complete && (this.config.map_display !== "floor_plan" || this.mapScene?.walls.length)
+    const scene = this.mapPicking && img.complete && (this.config.map_display === "structured"
+      || (this.config.map_display === "floor_plan" && this.mapScene?.walls.length))
       ? this.mapScene : null;
     const previous = this.paintedScene;
     const previousKey = this.paintedKey;
@@ -1974,12 +1999,43 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     canvas.style.opacity = String(presentation.opacity ?? 1);
     layer.style.setProperty("--map-opacity", String(presentation.opacity ?? 1));
     layer.style.setProperty("--map-object-opacity", String(presentation.object_opacity ?? 1));
+    this.renderMapAsset("map-background", presentation.background_image, img);
+    this.renderMapAsset("map-foreground", presentation.overlay_image, img);
     for (const key of ["active_area", "no_go", "no_mop", "virtual_wall", "wall", "carpet", "icon_background", "text"]) {
       layer.style.setProperty(`--map-${key.replaceAll("_", "-")}`, colors[key] ?? "");
     }
     layer.classList.toggle("structured", this.structuredVisible);
     layer.classList.toggle("room-picking", this.structuredVisible && this.mode === "room");
     if (this.paintedScene !== previous || previousKey !== paintKey) this.renderMapObjectLayers();
+  }
+
+  renderMapAsset(id, asset, image) {
+    const node = this.part(id);
+    const width = image.naturalWidth, height = image.naturalHeight;
+    const step = this.mapScene?.step;
+    const geometry = asset && ["left", "top", "width", "height"].some((key) => asset[key] != null);
+    const hide = () => {
+      node.hidden = true;
+      node.removeAttribute("src");
+    };
+    if (!asset || !this.mapPicking || !image.complete || !width || !height || (geometry && !step)) return hide();
+    const project = (point) => projectPoint(this.calibration, point, "vacuum", "map");
+    const centerWorld = projectPoint(this.calibration, [width / 2, height / 2], "map", "vacuum");
+    const origin = project([0, 0]), right = project([1, 0]), down = project([0, -1]);
+    if (!origin || !right || !down || !centerWorld) return hide();
+    const center = project([asset.left == null ? centerWorld[0] : asset.left * step,
+      asset.top == null ? centerWorld[1] : asset.top * step]);
+    const horizontal = [right[0] - origin[0], right[1] - origin[1]];
+    const vertical = [down[0] - origin[0], down[1] - origin[1]];
+    const quarterTurn = Math.abs(horizontal[1]) > Math.abs(horizontal[0]);
+    const size = [asset.width == null ? (quarterTurn ? height : width) : asset.width * step * Math.hypot(...horizontal),
+      asset.height == null ? (quarterTurn ? width : height) : asset.height * step * Math.hypot(...vertical)];
+    if (!center?.every(Number.isFinite) || !size.every(Number.isFinite)) return hide();
+    node.hidden = false;
+    Object.assign(node.style, { left: `${center[0] / width * 100}%`, top: `${center[1] / height * 100}%`,
+      width: `${size[0] / width * 100}%`, height: `${size[1] / height * 100}%`, opacity: String(asset.opacity ?? 1) });
+    node.style.setProperty("--art-angle", `${Math.atan2(horizontal[1], horizontal[0])}rad`);
+    if (node.getAttribute("src") !== asset.url) node.setAttribute("src", asset.url);
   }
 
   update() {

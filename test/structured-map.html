@@ -161,7 +161,19 @@
       card.setConfig(config);
       await waitFor(() => !canvas.hidden);
       update(42, 7, { map_index: 1, rotation: 90 });
+      card.setConfig({ ...config, map_config: { map_1: {
+        background_image: { url: "/local/floor.png", left: 5.6, top: 9, width: 4, height: 2, opacity: .75 },
+        overlay_image: { url: "/local/upper-walls.png", opacity: .9 },
+      } } });
+      const background = el("map-background"), foreground = el("map-foreground");
+      require(background?.getAttribute("src") === "/local/floor.png" && foreground?.getAttribute("src") === "/local/upper-walls.png",
+        "The configured floor images were not mounted");
+      await Promise.all([background.decode(), foreground.decode()]);
+      require(background.style.opacity === "0.75" && foreground.style.opacity === "0.9"
+        && Math.abs(parseFloat(background.style.left) - 25.25) < .01 && Math.abs(parseFloat(background.style.width) - 22.5) < .01,
+        "Image placement did not use the calibrated grid or configured opacity");
       card.setConfig({ ...config, map_config: { map_1: { rotation: 180 } } });
+      require(background.hidden && foreground.hidden && !background.hasAttribute("src"), "Old floor artwork remains after configuration is removed");
       const rotated = el("map").getBoundingClientRect();
       const frame = el("figure").getBoundingClientRect();
       require(Math.abs(rotated.width / rotated.height - 290 / 400) < .02

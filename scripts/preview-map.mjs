@@ -40,7 +40,8 @@ createServer(async (request, response) => {
     response.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-store" });
     return response.end(await readFile(new URL(file, import.meta.url)));
   }
-  if (["/api/camera_proxy/camera.fixture_map", "/api/camera_map_obstacle_proxy/camera.fixture_map"].includes(url.pathname)) {
+  if (["/api/camera_proxy/camera.fixture_map", "/api/camera_map_obstacle_proxy/camera.fixture_map",
+    "/local/floor.png", "/local/upper-walls.png"].includes(url.pathname)) {
     response.writeHead(200, { "Content-Type": "image/svg+xml" });
     return response.end(fallback);
   }

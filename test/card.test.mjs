@@ -322,6 +322,8 @@ test("validates additive panel and map configuration", async () => {
   assert.equal(validateCardConfig({ map_config: { map_1: { opacity: .5, object_opacity: .4, hidden_objects: ["path"] } } }), true);
   assert.throws(() => validateCardConfig({ map_config: { map_0: {} } }), /map_config/i);
   assert.throws(() => validateCardConfig({ map_config: { map_1: { opacity: 1.1 } } }), /map_config/i);
+  assert.throws(() => validateCardConfig({ map_config: { map_1: { background_image: { url: "//example.com/a.png" } } } }), /background_image/);
+  assert.throws(() => validateCardConfig({ map_config: { map_1: { overlay_image: { url: "/local/../secret.png" } } } }), /overlay_image/);
   assert.equal(validateCardConfig({ scripts: ["script.mop_kitchen", "script.sweep_living_room"] }), true);
   assert.throws(() => validateCardConfig({ scripts: ["switch.kitchen"] }), /scripts/i);
   assert.equal(validateCardConfig({ override_colors: {

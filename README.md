@@ -60,6 +60,7 @@ Use `hidden_objects` to hide supported map layers: `floor`, `walls`, `material`,
 
 `map_config.map_1` applies to the first saved-map index, not map ID 1. For each index, `opacity` sets the map image opacity, `object_opacity` sets the opacity of the robot, dock, furniture and markers, and `hidden_objects` replaces the global list for that floor. Both opacities range from 0 to 1.
 Set `rotation` to `0`, `90`, `180` or `270` to override the floor's native display angle without moving map targets. This is separate from the legacy top-level `map.rotation`, which disables map picking when nonzero.
+Use `background_image` or `overlay_image` under a floor to add artwork from `/local/`. Each image accepts `url` and `opacity`; the optional `left`, `top`, `width` and `height` use unscaled map grid units and require a matching map frame. The overlay is drawn above the path and below interactive markers.
 
 `override_colors` accepts hex or comma-separated `rgb()`/`rgba()` colors. Supported keys are `floor`, `wall`, `path`, `carpet`, `active_area`, `no_go`, `no_mop`, `virtual_wall`, `icon_background`, `text`, and `segment`. The `segment` list contains `[normal, selected]` pairs for room fills. Colors in `dark` override the base list when the Home Assistant dashboard uses a dark theme. The fallback camera image cannot be recolored.
 
@@ -97,7 +98,7 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 - Rename, split and merge rooms, back up and restore maps, and edit walls, restricted zones, carpets, furniture and floor materials through action forms. Advanced actions require confirmation. The field names match the Home Assistant action schema.
 - Use responsive panel mode with Home Assistant theme colors, keyboard-focus styles and capability-driven controls. Unsupported model actions remain hidden or disabled instead of producing invalid service calls.
 
-Feature availability depends on the vacuum model, integration version and enabled entities. The card was developed against Dreame Vacuum v2.0.3. Full graphical map editing, custom floor backgrounds, continuous steering and live video are outside the current implementation.
+Feature availability depends on the vacuum model, integration version and enabled entities. The card was developed against Dreame Vacuum v2.0.3. Full graphical map editing, continuous steering and live video are outside the current implementation.
 
 ## Development
 
