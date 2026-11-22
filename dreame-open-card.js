@@ -1401,7 +1401,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     body.classList.toggle("left-handed", config.left_handed === true);
     body.classList.toggle("full-height", config.full_height === true);
     const figure = this.part("figure");
-    figure.classList.toggle("ratio-frame", config.aspect_ratio != null);
+    figure.classList.toggle("ratio-frame", Boolean(config.aspect_ratio != null));
     figure.style.setProperty("--map-aspect-ratio", String(config.aspect_ratio ?? ""));
     this.applyHomeVisibility(config.hidden_card_objects ?? []);
     body.classList.remove("scheme-dreame-dark", "scheme-dreame-light", "scheme-grayscale");
@@ -1503,7 +1503,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     for (const button of this.part("modes").children) {
       button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
     }
-    this.part("map-layer").classList.toggle("picking", this.mapPicking && !this.part("tools").hidden);
+    this.part("map-layer").classList.toggle("picking", Boolean(this.mapPicking && !this.part("tools").hidden));
     this.part("map-layer").classList.toggle("room-picking", Boolean(this.structuredVisible && mode === "room"));
     this.renderRoomMarkers();
     this.renderObjectMarkers();
@@ -2161,8 +2161,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     for (const key of ["active_area", "no_go", "no_mop", "virtual_wall", "wall", "carpet", "icon_background", "text"]) {
       layer.style.setProperty(`--map-${key.replaceAll("_", "-")}`, colors[key] ?? "");
     }
-    layer.classList.toggle("structured", this.structuredVisible);
-    layer.classList.toggle("room-picking", this.structuredVisible && this.mode === "room");
+    layer.classList.toggle("structured", Boolean(this.structuredVisible));
+    layer.classList.toggle("room-picking", Boolean(this.structuredVisible && this.mode === "room"));
     if (this.paintedScene !== previous || previousKey !== paintKey) this.renderMapObjectLayers();
   }
 
@@ -2199,7 +2199,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const figure = this.part("figure");
     const frame = this.part("map-frame");
     const step = this.mapScene?.step;
-    const hasFit = step && ["left", "top", "width", "height", "scale"].some((key) => presentation[key] != null);
+    const hasFit = Boolean(step && ["left", "top", "width", "height", "scale"].some((key) => presentation[key] != null));
     figure.classList.toggle("map-fit", hasFit);
     if (!hasFit) {
       frame.style.removeProperty("transform");

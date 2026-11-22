@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 const runs = { 1: [], 2: [], 255: [], 512: [] };
 for (let y = 1; y < 9; y++) {
@@ -39,6 +39,18 @@ createServer(async (request, response) => {
     const [file, contentType] = files[url.pathname];
     response.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-store" });
     return response.end(await readFile(new URL(file, import.meta.url)));
+  }
+  if (url.pathname.startsWith("/Assets/")) {
+    const filename = decodeURIComponent(url.pathname.slice(8));
+    try {
+      const data = await readFile(new URL(`../../Assets/${filename}`, import.meta.url));
+      const ext = filename.split(".").pop();
+      const mime = ext === "mp4" ? "video/mp4" : ext === "png" ? "image/png" : "application/octet-stream";
+      response.writeHead(200, { "Content-Type": mime });
+      return response.end(data);
+    } catch {
+      return response.writeHead(404).end();
+    }
   }
   if (["/api/camera_proxy/camera.fixture_map", "/api/camera_map_obstacle_proxy/camera.fixture_map",
     "/local/floor.png", "/local/upper-walls.png"].includes(url.pathname)) {
