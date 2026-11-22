@@ -791,6 +791,12 @@ function validateMapPresentation(maps) {
       throw new Error("map_config is invalid.");
     }
     if (floor.rotation != null && ![0, 90, 180, 270].includes(floor.rotation)) throw new Error(`map_config.${key}.rotation is invalid.`);
+    for (const name of ["left", "top", "width", "height", "scale", "object_scale", "font_size"]) {
+      if (floor[name] != null && (!Number.isFinite(floor[name]) || (["width", "height", "scale", "object_scale"].includes(name) && floor[name] <= 0)
+        || (name === "scale" && (floor[name] < .1 || floor[name] > 20)) || (name === "font_size" && (floor[name] < 0 || floor[name] > 12)))) {
+        throw new Error(`map_config.${key}.${name} is invalid.`);
+      }
+    }
     for (const name of ["background_image", "overlay_image"]) {
       if (floor[name] != null) validateMapAsset(floor[name], `map_config.${key}.${name}`);
     }
