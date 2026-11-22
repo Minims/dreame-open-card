@@ -542,6 +542,15 @@ const DOCK_ACTIONS = [
   ["manual_dust_bag_drying", "Dry dust bag", "fire"], ["start_auto_empty", "Empty dust bag", "delete-empty"],
 ];
 const DOCK_SENSORS = ["clean_water_tank_status", "dirty_water_tank_status", "dust_bag_status", "detergent_status"];
+const CLEANING_CONTROLS = [
+  ["cleaning_mode", "Cleaning mode", "select", { sweeping: "broom", mopping: "water", sweeping_and_mopping: "hydro-power", mopping_after_sweeping: "broom" }],
+  ["suction_level", "Suction level", "select", { quiet: "fan-speed-1", standard: "fan-speed-2", strong: "fan-speed-3", turbo: "fan-alert" }],
+  ["mop_pad_humidity", "Water level", "select", { low: "water-low", standard: "water", high: "water-percent" }],
+  ["wetness_level", "Wetness level", "number"],
+  ["cleaning_route", "Route", "select", { standard: "vector-polyline", quick: "fast-forward", deep: "repeat" }],
+  ["cleangenius", "CleanGenius", "select", { off: "close", routine_cleaning: "shield-check", deep_cleaning: "shield-star" }],
+  ["customized_cleaning", "Customized cleaning", "switch"],
+];
 const CONSUMABLES = ["main_brush", "side_brush", "filter", "sensor_dirty", "tank_filter", "mop_pad", "silver_ion", "detergent",
   "squeegee", "onboard_dirty_water_tank", "dirty_water_channel_dirty", "deodorizer", "wheel_dirty",
   "scale_inhibitor", "fluffing_roller_dirty", "roller_mop_filter_dirty", "water_outlet_filter_dirty", "washboard_cleaning"];
@@ -1083,8 +1092,15 @@ const TEMPLATE = `
   .consumable progress.low { accent-color:#bd5b00; }
   #object-summary { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
   #object-summary span { padding:5px 9px; border-radius:14px; background:var(--secondary-background-color,#edf0f0); font-size:12px; }
-  #editor-detail, #schedule-detail, #shortcut-detail { border-top:1px solid var(--divider-color,#ddd); padding-top:10px; }
+  #editor-detail, #schedule-detail, #shortcut-detail, #cleaning-detail { border-top:1px solid var(--divider-color,#ddd); padding-top:10px; }
   #editor-detail form, #schedule-detail form, #shortcut-detail form { display:grid; gap:8px; }
+  .setting-row { display:grid; gap:6px; margin-bottom:12px; }
+  .setting-label { font-size:13px; font-weight:500; color:var(--secondary-text-color,#666); }
+  .setting-group { display:flex; gap:4px; background:var(--secondary-background-color,#f0f0f0); border-radius:12px; padding:3px; }
+  .setting-btn { flex:1; display:flex; align-items:center; justify-content:center; gap:4px; padding:8px;
+    border:0; border-radius:10px; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:12px; }
+  .setting-btn[aria-pressed="true"] { background:var(--primary-color,#00bcd4); color:white; }
+  .setting-slider { width:100%; accent-color:var(--primary-color,#00bcd4); }
   #editor-detail input[type=url] { width:100%; }
   .remote-live { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .remote-live input { width:100%; }
@@ -1177,7 +1193,8 @@ const TEMPLATE = `
     <div id="floors" hidden></div>
   </div>
   <div id="views" hidden>
-    <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div>
+    <details id="cleaning-detail" hidden><summary data-i18n>Cleaning settings</summary><div id="cleaning-settings"></div></details>
+  <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div>
       <details hidden><summary data-i18n>Shortcuts</summary><div id="device-shortcuts"></div></details>
     </details>
   <details id="photos-detail" hidden><summary data-i18n>History and photos</summary><div id="photos"></div></details>
@@ -1759,7 +1776,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   renderMenu(basic, available) {
-    const panels = [["editor-detail", "Map editor", "map-outline"], ["edit-detail", "Map editing and management", "home-edit"],
+    const panels = [["cleaning-detail", "Cleaning settings", "tune-variant"],
+      ["editor-detail", "Map editor", "map-outline"], ["edit-detail", "Map editing and management", "home-edit"],
       ["photos-detail", "History and photos", "history"], ["schedule-detail", "Schedules", "calendar-clock"],
       ["shortcut-detail", "Shortcuts", "lightning-bolt-outline"],
       ["maintenance-detail", "Accessory usage", "wrench-outline"],
@@ -2290,6 +2308,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       return [id, state, a.friendly_name, a.options, a.unit_of_measurement, a.min, a.max, a.step];
     });
     this.section("settings", [settingsSignature, settingActions], (node) => this.renderSettings(node, ids));
+    this.renderCleaningSettings(ids);
     this.renderMaintenance();
     this.renderMapObjects(map);
     this.renderObjectEditor();
@@ -2570,6 +2589,49 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         this.showPicks();
       }
     } catch (error) { this.status(error.message, true); }
+  }
+
+  renderCleaningSettings(ids) {
+    const detail = this.part("cleaning-detail");
+    const container = this.part("cleaning-settings");
+    const controls = CLEANING_CONTROLS.map(([key, label, domain, icons]) => {
+      const id = dreameEntity(this.ha, this.config, ids, domain, key);
+      return id ? { key, label, domain, icons, id, entity: this.ha.states[id] } : null;
+    }).filter(Boolean);
+    detail.hidden = !controls.length;
+    if (detail.hidden) return;
+    container.replaceChildren();
+    for (const { key, label, domain, icons, id, entity } of controls) {
+      const a = entity.attributes ?? {};
+      const row = element("div", null, { class: "setting-row" });
+      const current = entity.state;
+      row.append(element("span", `${this.t(label)}: ${this.t(current)}`, { class: "setting-label" }));
+      if (domain === "select" && Array.isArray(a.options)) {
+        const group = element("div", null, { class: "setting-group", role: "group", "aria-label": this.t(label) });
+        for (const option of a.options) {
+          const btn = element("button", null, { type: "button", class: "setting-btn",
+            "aria-label": this.t(option), "aria-pressed": String(option === current) });
+          const iconName = icons?.[option];
+          if (iconName) btn.append(icon(iconName));
+          else btn.textContent = this.t(option);
+          btn.addEventListener("click", () => this.run("select.select_option", { option }, id));
+          group.append(btn);
+        }
+        row.append(group);
+      } else if (domain === "switch") {
+        const toggle = element("input", null, { type: "checkbox", class: "setting-toggle" });
+        toggle.checked = current === "on";
+        toggle.addEventListener("change", () =>
+          this.run(toggle.checked ? "switch.turn_on" : "switch.turn_off", {}, id));
+        row.append(toggle);
+      } else if (domain === "number") {
+        const slider = element("input", null, { type: "range", min: String(a.min ?? 1), max: String(a.max ?? 30),
+          step: String(a.step ?? 1), value: current, class: "setting-slider" });
+        slider.addEventListener("change", () => this.run("number.set_value", { value: slider.valueAsNumber }, id));
+        row.append(slider);
+      }
+      container.append(row);
+    }
   }
 
   renderSettings(node, ids) {

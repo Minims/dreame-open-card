@@ -30,6 +30,12 @@
     card.hass = {
       locale: { language: "en" },
       themes: { darkMode: dark },
+      entities: {
+        [vacuum]: { device_id: "robot" },
+        [camera]: { device_id: "robot", platform: "dreame_vacuum", translation_key: "map" },
+        "select.fixture_cleaning_mode": { device_id: "robot", platform: "dreame_vacuum", translation_key: "cleaning_mode" },
+        "select.fixture_suction_level": { device_id: "robot", platform: "dreame_vacuum", translation_key: "suction_level" },
+      },
       states: {
         [vacuum]: { state: "docked", attributes: { friendly_name: "Fixture vacuum", battery_level: 82,
           selected_map_id: floor, maps: [{ id: 7, name: "Downstairs" }, { id: 8, name: "Upstairs" }],
@@ -43,10 +49,15 @@
             2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
         "script.sweep": { state: "off", attributes: { friendly_name: "Sweep helper" } },
         "script.quiet": { state: "off", attributes: { friendly_name: "Quiet helper" } },
+        "select.fixture_cleaning_mode": { state: "sweeping_and_mopping",
+          attributes: { friendly_name: "Fixture Cleaning mode", options: ["sweeping", "mopping", "sweeping_and_mopping"] } },
+        "select.fixture_suction_level": { state: "standard",
+          attributes: { friendly_name: "Fixture Suction level", options: ["quiet", "standard", "strong", "turbo"] } },
       },
       services: {
         vacuum: { start: {}, return_to_base: {} },
         script: { turn_on: {} },
+        select: { select_option: {} },
         dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
           "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map"].map(name => [`vacuum_${name}`, {}])),
       },
@@ -250,6 +261,20 @@
       const scaledRoom = el("room-markers").querySelector('[data-room="1"]');
       require(getComputedStyle(scaledRoom).scale === "2" && getComputedStyle(scaledRoom).fontSize === "8px",
         "object_scale and font_size did not apply to room markers");
+      button("menu", "Menu")?.click();
+      const cleaningBtn = button("menu-items", "Cleaning settings");
+      require(cleaningBtn, "Cleaning settings is missing from the menu");
+      cleaningBtn.click();
+      const cleaningDetail = el("cleaning-detail");
+      require(cleaningDetail.open, "Cleaning settings panel did not open");
+      const suctionButtons = el("cleaning-settings").querySelectorAll('[aria-label="Suction level"] button');
+      require(suctionButtons.length === 4, "Suction level did not render 4 options");
+      const activeSuction = el("cleaning-settings").querySelector('[aria-label="Suction level"] button[aria-pressed="true"]');
+      require(activeSuction?.getAttribute("aria-label").toLowerCase() === "standard", "Standard suction level is not active");
+      suctionButtons[3].click();
+      require(calls.some(c => c.domain === "select" && c.service === "select_option" && c.payload.option === "turbo"),
+        "Clicking turbo did not call select_option with turbo");
+      cleaningDetail.open = false;
       update();
       card.setConfig(config);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
