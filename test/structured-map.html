@@ -242,6 +242,23 @@
       card.setConfig(config);
       require(!el("state").hidden && !el("modes").hidden && !el("basic").hidden && !el("quick").hidden,
         "Removing visibility settings does not restore the controls");
+
+      update(44, 7, { map_index: 1 });
+      const pathBefore = [...pixel(250, 101)].join();
+      card.setConfig({ ...config, hidden_objects: ["walls"],
+        map_config: { map_1: { opacity: .45, object_opacity: .4, hidden_objects: ["path", "charger", "furniture", "doors"] } } });
+      await waitFor(() => !canvas.hidden);
+      require(getComputedStyle(canvas).opacity === "0.45" && !el("map-objects").querySelector("line.door"),
+        "Per-floor map opacity or hidden object settings were not applied");
+      require(getComputedStyle(el("room-markers")).opacity === "0.4", "Per-floor marker opacity was not applied");
+      require(pixel(282, 87)[0] < (dark ? 135 : 210) && !isWhite(76, 77),
+        "Hidden furniture or charger is still visible");
+      require([...pixel(250, 101)].join() !== pathBefore, "Hidden path is still visible");
+      require(pixel(25, 140)[3] === 255, "Floor layer settings did not override global hidden_objects");
+      update(44, 7, { map_index: 2 });
+      require(getComputedStyle(canvas).opacity === "1" && pixel(25, 140)[3] === 0,
+        "An unconfigured map index did not revert to the global layer settings");
+      card.setConfig(config);
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {
       output.value = `FAIL: ${error.message}`;

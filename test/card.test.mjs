@@ -319,6 +319,9 @@ test("validates additive panel and map configuration", async () => {
   assert.equal(validateCardConfig({ left_handed: true, hidden_card_objects: ["title", "state", "status"] }), true);
   assert.throws(() => validateCardConfig({ left_handed: "true" }), /left_handed/);
   assert.throws(() => validateCardConfig({ hidden_card_objects: [123] }), /hidden_card_objects/);
+  assert.equal(validateCardConfig({ map_config: { map_1: { opacity: .5, object_opacity: .4, hidden_objects: ["path"] } } }), true);
+  assert.throws(() => validateCardConfig({ map_config: { map_0: {} } }), /map_config/i);
+  assert.throws(() => validateCardConfig({ map_config: { map_1: { opacity: 1.1 } } }), /map_config/i);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {

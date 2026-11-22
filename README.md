@@ -50,6 +50,10 @@ map:
 
 Set `left_handed: true` to move the map's action rail to the left. `hidden_card_objects` is a YAML list. Supported entries are `title`, `state`, `status` (telemetry), `menu`, `task_type` (mode selector), `controls` (mode selector and primary buttons), and `action_buttons` (the map's action rail). If you hide only `title`, the state takes its place. Other entries do not yet change the card.
 
+Use `hidden_objects` to hide supported map layers: `floor`, `walls`, `material`, `path`, `carpet`, `charger`, `vacuum`, `furniture`, `obstacle`, `doors`, `no_go`, `no_mop`, `virtual_wall`, `virtual_threshold`, `passable_threshold`, and `impassable_threshold`. Layers already drawn into the fallback camera image cannot be removed. Restrictions stay visible while the map editor is open.
+
+`map_config.map_1` applies to the first saved-map index, not map ID 1. For each index, `opacity` sets the map image opacity, `object_opacity` sets the opacity of the robot, dock, furniture and markers, and `hidden_objects` replaces the global list for that floor. Both opacities range from 0 to 1.
+
 If the card cannot discover your settings and maintenance entities, list them explicitly.
 Set a `features` entry to `false` to hide its dedicated view. These switches do not change Home Assistant permissions or remove entities from the generic settings list.
 

@@ -280,6 +280,11 @@ function roomColor(id, palette) {
   return palette[(id - 1) % palette.length];
 }
 
+function mapPresentation(config, index) {
+  const floor = config.map_config?.[`map_${index}`];
+  return { ...floor, hidden_objects: floor?.hidden_objects ?? config.hidden_objects };
+}
+
 function floorPattern(ctx, material, dark) {
   const tile = document.createElement("canvas");
   tile.width = tile.height = 32;
@@ -303,20 +308,21 @@ function fillMapRuns(ctx, runs) {
   for (let i = 0; i < runs.length; i += 3) ctx.fillRect(runs[i], runs[i + 1], runs[i + 2], 1);
 }
 
-function paintMapCells(ctx, scene, dark) {
+function paintMapCells(ctx, scene, dark, hidden) {
   const palette = ROOM_COLORS[dark ? "dark" : "light"];
   const patterns = new Map();
   for (const [key, runs] of scene.layers) {
     const type = Number(key);
     const room = roomPixel(type);
-    if ((type >= 200 && type <= 232) || scene.hiddenRooms.has(room)) continue;
-    if (type === 512) ctx.globalCompositeOperation = "source-atop";
     const wall = [251, 255].includes(type) || (type > 100 && type < 200);
+    if ((type >= 200 && type <= 232) || scene.hiddenRooms.has(room)
+      || hidden.has(wall ? "walls" : type === 512 ? "carpet" : "floor")) continue;
+    if (type === 512) ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = type === 512 ? "#b891574d" : wall ? (dark ? "#96a6bb" : "#47566a")
       : isRoomFloor(type) ? roomColor(room, palette) : (dark ? "#46515e" : "#cfdae5");
     fillMapRuns(ctx, runs);
     const material = scene.materials?.[type];
-    if (!isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
+    if (hidden.has("material") || !isRoomFloor(type) || ![1, 2, 3].includes(material)) continue;
     if (!patterns.has(material)) patterns.set(material, floorPattern(ctx, material, dark));
     ctx.fillStyle = patterns.get(material);
     fillMapRuns(ctx, runs);
@@ -324,11 +330,11 @@ function paintMapCells(ctx, scene, dark) {
   ctx.globalCompositeOperation = "source-over";
 }
 
-function paintScene(canvas, scene, calibration, image) {
+function paintScene(canvas, scene, calibration, presentation) {
   const { left, top, width, height, step } = scene;
   const [origin, right, up] = [[left, top], [left + step, top], [left, top + step]]
     .map((coords) => projectPoint(calibration, coords, "vacuum", "map"));
-  const { naturalWidth, naturalHeight } = image;
+  const { naturalWidth, naturalHeight } = presentation.image;
   if (![origin, right, up].every((coords) => coords?.every(Number.isFinite))
     || !naturalWidth || !naturalHeight || naturalWidth * naturalHeight > 4_000_000) return false;
   const ctx = canvas.getContext("2d");
@@ -337,10 +343,12 @@ function paintScene(canvas, scene, calibration, image) {
   canvas.height = naturalHeight;
   ctx.setTransform(right[0] - origin[0], right[1] - origin[1], up[0] - origin[0], up[1] - origin[1], ...origin);
   const dark = canvas.closest(".body").classList.contains("scheme-dreame-dark");
-  paintMapCells(ctx, scene, dark);
-  paintMapFurniture(ctx, scene, dark);
-  paintMapPaths(ctx, scene, dark);
-  paintMapPositions(ctx, scene);
+  const hidden = new Set(presentation.hidden_objects ?? []);
+  paintMapCells(ctx, scene, dark, hidden);
+  if (!hidden.has("path")) paintMapPaths(ctx, scene, dark);
+  ctx.globalAlpha = presentation.object_opacity ?? 1;
+  if (!hidden.has("furniture")) paintMapFurniture(ctx, scene, dark);
+  paintMapPositions(ctx, scene, hidden);
   return true;
 }
 
@@ -414,12 +422,13 @@ function paintMapPaths(ctx, { path, left, top, step }, dark) {
   }
 }
 
-function paintMapPositions(ctx, scene) {
+function paintMapPositions(ctx, scene, hidden) {
   const { left, top, step, width, height } = scene;
   const transform = ctx.getTransform();
   const radius = Math.min(ctx.canvas.width, ctx.canvas.height) * .033;
   ctx.resetTransform();
-  for (const [position, paint] of [[scene.dock, paintDockIcon], [scene.robot, paintRobotIcon]]) {
+  for (const [position, paint, key] of [[scene.dock, paintDockIcon, "charger"], [scene.robot, paintRobotIcon, "vacuum"]]) {
+    if (hidden.has(key)) continue;
     if (!Array.isArray(position) || !position.slice(0, 2).every(Number.isFinite) || position.length < 2) continue;
     const x = (position[0] - left) / step, y = (position[1] - top) / step;
     if (x < 0 || x >= width || y < 0 || y >= height) continue;
@@ -749,10 +758,29 @@ function validateCoordinateRows(rows, field, lengths) {
     && row.every(Number.isSafeInteger))) throw new Error("Invalid coordinate rows · " + field);
 }
 
+function validateMapPresentation(maps) {
+  if (!maps || typeof maps !== "object" || Array.isArray(maps)) throw new Error("map_config must be an object.");
+  for (const [key, floor] of Object.entries(maps)) {
+    if (!/^map_[1-9]\d*$/.test(key) || !floor || typeof floor !== "object" || Array.isArray(floor)) {
+      throw new Error("map_config is invalid.");
+    }
+    for (const name of ["opacity", "object_opacity"]) {
+      if (floor[name] != null && (!Number.isFinite(floor[name]) || floor[name] < 0 || floor[name] > 1)) {
+        throw new Error(`map_config.${key}.${name} must be between 0 and 1.`);
+      }
+    }
+    if (floor.hidden_objects != null && (!Array.isArray(floor.hidden_objects)
+      || !floor.hidden_objects.every((item) => typeof item === "string"))) throw new Error("map_config hidden_objects is invalid.");
+  }
+}
+
 export function validateCardConfig(config = {}) {
   if (config.left_handed != null && typeof config.left_handed !== "boolean") throw new Error("left_handed must be a boolean.");
   if (config.hidden_card_objects != null && (!Array.isArray(config.hidden_card_objects)
     || !config.hidden_card_objects.every((key) => typeof key === "string"))) throw new Error("hidden_card_objects must be a list of names.");
+  if (config.hidden_objects != null && (!Array.isArray(config.hidden_objects)
+    || !config.hidden_objects.every((key) => typeof key === "string"))) throw new Error("hidden_objects must be a list of names.");
+  if (config.map_config != null) validateMapPresentation(config.map_config);
   if (config.map_display != null && !["standard", "structured"].includes(config.map_display)) throw new Error("map_display is invalid.");
   if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
   const map = config.map ?? {};
@@ -888,6 +916,7 @@ const TEMPLATE = `
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
+  #map-layer #map { opacity:var(--map-opacity,1); }
   #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-layer.structured #map { opacity:0; }
   #map-layer.room-picking #map { cursor:crosshair; }
@@ -917,7 +946,7 @@ const TEMPLATE = `
   #map-layer.picking img { cursor:crosshair; }
   .pin { pointer-events:none; position:absolute; width:12px; height:12px; transform:translate(-50%,-50%);
     border:2px solid white; border-radius:50%; background:var(--accent); box-shadow:0 0 0 1px #26352d; }
-  #room-markers { position:absolute; inset:0; pointer-events:none; }
+  #room-markers { position:absolute; inset:0; pointer-events:none; opacity:var(--map-object-opacity,1); }
   #zone-overlay, #zone-overlay svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #zone-overlay polygon { fill:#008dc53a; stroke:#006ab6; stroke-width:2;
     vector-effect:non-scaling-stroke; stroke-dasharray:5 3; }
@@ -965,7 +994,7 @@ const TEMPLATE = `
     left:50%; transform:translateX(-50%); min-width:26px; height:26px; box-sizing:border-box; padding:0 4px;
     border:2px solid white; border-radius:999px; background:var(--room-color);
     font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
-  #object-markers { position:absolute; inset:0; pointer-events:none; }
+  #object-markers { position:absolute; inset:0; pointer-events:none; opacity:var(--map-object-opacity,1); }
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
@@ -1056,6 +1085,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.pending = new Set();
     const map = this.part("map");
     map.addEventListener("click", (event) => this.pickOnMap(event));
+    this.part("editor-detail").addEventListener("toggle", () => this.renderMapObjectLayers());
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -1292,7 +1322,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   renderObjectMarkers() {
     const img = this.part("map");
     const target = this.part("object-markers");
-    const markers = mapObjectMarkers(this.currentMap, this.calibration, img.naturalWidth, img.naturalHeight);
+    const hidden = new Set(mapPresentation(this.config, this.mapIndex).hidden_objects ?? []);
+    const hiddenByKind = { obstacles: "obstacle", carpets: "carpet", furniture: "furniture" };
+    const markers = mapObjectMarkers(this.currentMap, this.calibration, img.naturalWidth, img.naturalHeight)
+      .filter(({ kind }) => !hidden.has(hiddenByKind[kind]));
     target.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || !markers.length;
     if (target.hidden) return;
     this.section("object-markers", markers, (node) => node.replaceChildren(...markers.map((marker) => {
@@ -1313,6 +1346,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const img = this.part("map");
     const layer = this.part("map-objects");
     const attrs = this.currentMap ?? {};
+    const presentation = mapPresentation(this.config, this.mapIndex);
     const namespace = "http://www.w3.org/2000/svg";
     const project = (point) => {
       const result = projectPoint(this.calibration, point, "vacuum", "map");
@@ -1333,18 +1367,26 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const start = project(row.slice(0, 2)); const end = project(row.slice(2, 4));
       return start && end ? [{ className, start, end }] : [];
     });
-    const polygons = RESTRICTION_LISTS.flatMap(({ field, attr }) => rectangles(attrs[attr], "restricted", field));
-    polygons.push(...rectangles(attrs.carpets, "carpet"));
+    const hidden = new Set(presentation.hidden_objects ?? []);
+    const editor = this.part("editor-detail");
+    const polygons = RESTRICTION_LISTS
+      .filter(({ field }) => (editor.open && !editor.hidden) || !hidden.has(field === "zones" ? "no_go" : "no_mop"))
+      .flatMap(({ field, attr }) => rectangles(attrs[attr], "restricted", field));
+    if (!hidden.has("carpet")) polygons.push(...rectangles(attrs.carpets, "carpet"));
     if (this.editPickMode && this.picks.length === 2) {
       const draft = mapArea(...this.picks.map(({ coords }) => coords));
       polygons.push(...rectangles([draft], "restricted draft"));
     }
-    const lines = [...wallLines(attrs.virtual_walls, "wall"), ...wallLines(attrs.virtual_thresholds, "threshold"),
-      ...wallLines(attrs.passable_thresholds, "threshold"), ...wallLines(attrs.impassable_thresholds, "threshold"),
-      ...wallLines(this.structuredVisible ? this.mapScene.doors : null, "door")];
+    const lines = [
+      ...(hidden.has("virtual_wall") ? [] : wallLines(attrs.virtual_walls, "wall")),
+      ...(hidden.has("virtual_threshold") ? [] : wallLines(attrs.virtual_thresholds, "threshold")),
+      ...(hidden.has("passable_threshold") ? [] : wallLines(attrs.passable_thresholds, "threshold")),
+      ...(hidden.has("impassable_threshold") ? [] : wallLines(attrs.impassable_thresholds, "threshold")),
+      ...(hidden.has("doors") ? [] : wallLines(this.structuredVisible ? this.mapScene.doors : null, "door")),
+    ];
     layer.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || (!polygons.length && !lines.length);
     if (layer.hidden) return;
-    this.section("map-objects", [polygons, lines], (node) => {
+    this.section("map-objects", [polygons, lines, presentation], (node) => {
       const svg = document.createElementNS(namespace, "svg");
       svg.setAttribute("viewBox", "0 0 100 100"); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("aria-hidden", "true");
       for (const { className, points } of polygons) {
@@ -1713,17 +1755,22 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const canvas = this.part("structured-map");
     const img = this.part("map");
     const layer = this.part("map-layer");
-    const paintKey = JSON.stringify([this.config.color_scheme, this.calibration, img.naturalWidth, img.naturalHeight]);
+    const presentation = mapPresentation(this.config, this.mapIndex);
+    const paintKey = JSON.stringify([this.config.color_scheme, this.calibration, img.naturalWidth, img.naturalHeight, presentation]);
     const scene = this.mapPicking && img.complete ? this.mapScene : null;
     const previous = this.paintedScene;
+    const previousKey = this.paintedKey;
     this.structuredVisible = Boolean(scene && ((!canvas.hidden && this.paintedScene === scene && this.paintedKey === paintKey)
-      || paintScene(canvas, scene, this.calibration, img)));
+      || paintScene(canvas, scene, this.calibration, { ...presentation, image: img })));
     this.paintedScene = this.structuredVisible ? scene : null;
     this.paintedKey = paintKey;
     canvas.hidden = !this.structuredVisible;
+    canvas.style.opacity = String(presentation.opacity ?? 1);
+    layer.style.setProperty("--map-opacity", String(presentation.opacity ?? 1));
+    layer.style.setProperty("--map-object-opacity", String(presentation.object_opacity ?? 1));
     layer.classList.toggle("structured", this.structuredVisible);
     layer.classList.toggle("room-picking", this.structuredVisible && this.mode === "room");
-    if (this.paintedScene !== previous) this.renderMapObjectLayers();
+    if (this.paintedScene !== previous || previousKey !== paintKey) this.renderMapObjectLayers();
   }
 
   update() {
@@ -1762,6 +1809,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     this.calibration = image && liveMap ? map.calibration_points : null;
     this.currentMap = map;
+    this.mapIndex = map.map_index ?? ((attrs.maps?.length ?? 0) <= 1 ? 1 : null);
     const calibrated = Boolean(mapPoint(this.calibration, [0, 0]));
     const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
     this.mapPicking = calibrated && available && !transformed;
