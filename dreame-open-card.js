@@ -259,8 +259,15 @@ export function decodeMapScene(raw, { floor, mapId, frame } = {}) {
     }
   }
   if (!pixels.some(Boolean)) return null;
+  const walls = Object.entries(raw.walls ?? {}).flatMap(([room, rows]) => {
+    if (hiddenRooms.has(Number(room)) || !Array.isArray(rows)) return [];
+    return rows.flatMap((row) => {
+      const line = Array.isArray(row) && lineCoordinates(row.slice(0, 4));
+      return line && (line[0] !== line[2] || line[1] !== line[3]) ? [line] : [];
+    });
+  });
   return { left, top, width, height, step, pixels, layers, hiddenRooms, materials: raw.floor_material,
-    robot: raw.robot_position, dock: raw.charger_position, path: raw.path, doors: raw.doors, furniture: raw.furnitures };
+    robot: raw.robot_position, dock: raw.charger_position, path: raw.path, walls, doors: raw.doors, furniture: raw.furnitures };
 }
 
 const roomPixel = (type) => type > 100 && type < 200 ? type - 100 : type;
@@ -825,7 +832,7 @@ export function validateCardConfig(config = {}) {
     || !config.hidden_objects.every((key) => typeof key === "string"))) throw new Error("hidden_objects must be a list of names.");
   if (config.map_config != null) validateMapPresentation(config.map_config);
   if (config.override_colors != null) validateOverrideColors(config.override_colors);
-  if (config.map_display != null && !["standard", "structured"].includes(config.map_display)) throw new Error("map_display is invalid.");
+  if (config.map_display != null && !["standard", "structured", "floor_plan"].includes(config.map_display)) throw new Error("map_display is invalid.");
   if (!["default", "panel"].includes(config.mode ?? "default")) throw new Error("mode must be default or panel.");
   const map = config.map ?? {};
   if (map.scale != null && (!Number.isFinite(map.scale) || map.scale <= 0)) throw new Error("map.scale must be positive.");
@@ -1068,6 +1075,8 @@ const TEMPLATE = `
   #map-objects, #map-objects svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
   #map-objects .wall { stroke:var(--map-virtual-wall,#0b8fe3); stroke-width:4; }
+  #map-objects .physical-wall { stroke:var(--map-wall,#47566a); stroke-width:3; opacity:var(--map-opacity,1); }
+  .scheme-dreame-dark #map-objects .physical-wall { stroke:var(--map-wall,#96a6bb); }
   #map-objects .threshold { stroke:#8c6b2f; stroke-width:3; stroke-dasharray:5 3; }
   #map-objects .door { stroke:#b65b52; stroke-width:2; stroke-linecap:round; }
   .scheme-dreame-dark #map-objects .door { stroke:#f0a496; }
@@ -1498,6 +1507,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       polygons.push(...rectangles([draft], this.editPickMode === "no_mops" ? "restricted mop draft" : "restricted draft"));
     }
     const lines = [
+      ...(this.structuredVisible && this.config.map_display === "floor_plan" && !hidden.has("walls")
+        ? wallLines(this.mapScene.walls, "physical-wall") : []),
       ...(hidden.has("virtual_wall") ? [] : wallLines(attrs.virtual_walls, "wall")),
       ...(hidden.has("virtual_threshold") ? [] : wallLines(attrs.virtual_thresholds, "threshold")),
       ...(hidden.has("passable_threshold") ? [] : wallLines(attrs.passable_thresholds, "threshold")),
@@ -1888,7 +1899,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   loadStructuredMap(image, identity, camera) {
-    const url = this.isConnected && this.config.map_display === "structured" && this.mapPicking
+    const url = this.isConnected && ["structured", "floor_plan"].includes(this.config.map_display) && this.mapPicking
       && identity.floor != null && identity.frame != null ? mapDataURL(image, camera) : null;
     const key = url ? JSON.stringify([url, identity]) : null;
     if (this.sceneKey === key) {
@@ -1928,9 +1939,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const colors = { ...overrides, ...(this.ha?.themes?.darkMode ? dark : {}) };
     const rooms = colors.segment ? this.currentMap?.rooms : undefined;
     const selected = this.roomSelection;
-    const paintKey = JSON.stringify([this.config.color_scheme, this.calibration, img.naturalWidth, img.naturalHeight,
+    const paintKey = JSON.stringify([this.config.color_scheme, this.config.map_display, this.calibration, img.naturalWidth, img.naturalHeight,
       presentation, colors, rooms, colors.segment ? [...selected] : null]);
-    const scene = this.mapPicking && img.complete ? this.mapScene : null;
+    const scene = this.mapPicking && img.complete && (this.config.map_display !== "floor_plan" || this.mapScene?.walls.length)
+      ? this.mapScene : null;
     const previous = this.paintedScene;
     const previousKey = this.paintedKey;
     this.structuredVisible = Boolean(scene && ((!canvas.hidden && this.paintedScene === scene && this.paintedKey === paintKey)
@@ -1941,7 +1953,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     canvas.style.opacity = String(presentation.opacity ?? 1);
     layer.style.setProperty("--map-opacity", String(presentation.opacity ?? 1));
     layer.style.setProperty("--map-object-opacity", String(presentation.object_opacity ?? 1));
-    for (const key of ["active_area", "no_go", "no_mop", "virtual_wall", "carpet", "icon_background", "text"]) {
+    for (const key of ["active_area", "no_go", "no_mop", "virtual_wall", "wall", "carpet", "icon_background", "text"]) {
       layer.style.setProperty(`--map-${key.replaceAll("_", "-")}`, colors[key] ?? "");
     }
     layer.classList.toggle("structured", this.structuredVisible);

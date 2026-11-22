@@ -48,6 +48,8 @@ map:
 
 `map_display: structured` opts into the experimental Canvas renderer. Omit the key (or use `standard`) to keep the camera image. Structured mode uses the Dreame camera's grid, path and positions when its floor and frame match the Home Assistant entity. The robot and dock have distinct icons. The robot shows a directional arrow only when the frame supplies a known heading. It draws wood or tile patterns where the integration reports the material. If the map data or calibration is unavailable, the card keeps the camera image. Non-neutral display transforms keep the camera image and disable map picking.
 
+`map_display: floor_plan` adds physical walls to the structured map when the matching frame provides them. Without physical wall data, the card keeps the camera image. This mode does not add graphical wall editing.
+
 Set `left_handed: true` to move the map's action rail to the left. `hidden_card_objects` is a YAML list. Supported entries are `title`, `state`, `status` (telemetry), `menu`, `task_type` (mode selector), `controls` (mode selector and primary buttons), `action_buttons` (the map's action rail), `shortcuts` (native shortcuts on the home screen), and `cruising_history`. If you hide only `title`, the state takes its place. Other entries do not yet change the card.
 
 Set `aspect_ratio` to the desired map frame width divided by height (between `0.1` and `100`). The card fits the map inside that frame without stretching it. The normal viewport height limit still applies unless you set `full_height: true`; that option can make the card taller than the screen.

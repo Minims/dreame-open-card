@@ -14,6 +14,7 @@ const frame = {
   data: runs, map_id: 71, saved_map_id: 7, frame_id: 42,
   floor_material: { 2: 3 },
   doors: [[450, 500, 500, 500, 450, 500, 500, 500, 0, 1, 1]],
+  walls: { 1: [[150, 600, 400, 600, 150, 610, 400, 610, 0, 1, 0]], 3: [[450, 600, 600, 600]] },
   hidden_segments: [3],
   furnitures: [
     [680, 560, 100, 120, 2, 0, 0, 100, 2, 1],
@@ -39,14 +40,14 @@ createServer(async (request, response) => {
     response.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-store" });
     return response.end(await readFile(new URL(file, import.meta.url)));
   }
-  if (url.pathname === "/api/camera_proxy/camera.fixture_map") {
+  if (["/api/camera_proxy/camera.fixture_map", "/api/camera_map_obstacle_proxy/camera.fixture_map"].includes(url.pathname)) {
     response.writeHead(200, { "Content-Type": "image/svg+xml" });
     return response.end(fallback);
   }
   if (url.pathname === "/api/camera_map_data_proxy/camera.fixture_map") {
     const version = url.searchParams.get("v");
     if (version === "43") return response.writeHead(404).end();
-    const map = version === "44" ? { ...frame, frame_id: 44, robot_position: [725, 395, 32767] } : frame;
+    const map = version === "44" ? { ...frame, frame_id: 44, walls: {}, robot_position: [725, 395, 32767] } : frame;
     response.writeHead(200, { "Content-Type": "application/json" });
     return response.end(JSON.stringify(map));
   }

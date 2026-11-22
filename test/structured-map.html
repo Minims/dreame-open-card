@@ -124,6 +124,7 @@
       const obstacleDialog = el("obstacle-dialog");
       require(obstacleDialog?.open && el("obstacle-photo").getAttribute("src") === photoUrl,
         "The selected obstacle did not open the photo matching its ID");
+      await waitFor(() => !el("obstacle-photo").hidden);
       obstacleDialog.close();
       obstacles[1].click();
       obstacles[1].querySelector(".obstacle-label").click();
@@ -149,6 +150,16 @@
       const map = canvas.getBoundingClientRect();
       require(Math.abs(overlay.width - map.width) <= 1 && Math.abs(overlay.height - map.height) <= 1,
         "Object overlays are not aligned to the rendered map");
+      const walls = () => [...el("map-objects").querySelectorAll(".physical-wall")];
+      require(walls().length === 0, "Structured mode drew floor-plan walls without being asked");
+      card.setConfig({ ...config, map_display: "floor_plan" });
+      await waitFor(() => walls().length > 0);
+      require(walls().length === 1 && Math.abs(Number(walls()[0].getAttribute("y1")) - 76 / 290 * 100) < .01,
+        "Physical walls used original rather than current coordinates or included hidden rooms");
+      card.setConfig({ ...config, map_display: "floor_plan", hidden_objects: ["walls"] });
+      require(walls().length === 0 && !canvas.hidden, "Hiding walls also disabled the floor-plan renderer");
+      card.setConfig(config);
+      await waitFor(() => !canvas.hidden);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
       const expected = dark ? [66, 99, 140, 255] : [164, 194, 244, 255];
       require(room.every((channel, i) => Math.abs(channel - expected[i]) <= 2), "Room does not render in its configured palette");
@@ -301,6 +312,11 @@
       require(el("map-objects").hidden || !el("map-objects").querySelector("line.door"), "Stale structured door is visible in camera fallback");
       require(el("map-objects").hidden || !el("map-objects").querySelector(".draft"), "Stale draft is still visible");
       update(44, 7);
+      await waitFor(() => !canvas.hidden);
+      card.setConfig({ ...config, map_display: "floor_plan" });
+      require(canvas.hidden && getComputedStyle(el("map")).opacity === "1" && walls().length === 0,
+        "Floor-plan mode did not fall back to the camera when physical walls were unavailable");
+      card.setConfig(config);
       await waitFor(() => !canvas.hidden);
       const readyHass = card.ha;
       card.setConfig({ ...config, hidden_card_objects: ["map_change_confirmation"] });
