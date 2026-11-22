@@ -106,7 +106,8 @@
       setRobotName("Eve Upstairs");
       require(el("title").textContent === "Eve Upstairs", "A distinct vacuum name was replaced by the device name");
       card.hass = fixtureHass;
-      update(42, 7, { obstacles: {
+      const photoUrl = `/api/camera_map_obstacle_proxy/${camera}?index=1`;
+      update(42, 7, { obstacle_picture: { "1: Base": photoUrl, "2: Base": "/api/camera_map_obstacle_proxy/camera.other" }, obstacles: {
         1: { type: "Base", x: 200, y: 400 }, 2: { type: "Base", x: 600, y: 400 },
         3: { type: "Meuble bloquant le robot", x: 800, y: 400 },
       } });
@@ -119,6 +120,16 @@
         "Selecting an obstacle did not show its detection label");
       obstacles[0].click();
       require(showsLabel(obstacles[0]) && !showsLabel(obstacles[2]), "More than one obstacle label stays visible");
+      obstacles[0].querySelector(".obstacle-label").click();
+      const obstacleDialog = el("obstacle-dialog");
+      require(obstacleDialog?.open && el("obstacle-photo").getAttribute("src") === photoUrl,
+        "The selected obstacle did not open the photo matching its ID");
+      obstacleDialog.close();
+      obstacles[1].click();
+      obstacles[1].querySelector(".obstacle-label").click();
+      require(obstacleDialog.open && !el("obstacle-photo").hasAttribute("src") && !el("obstacle-no-photo").hidden,
+        "An obstacle without a safe matching photo did not show the missing-photo state");
+      obstacleDialog.close();
       card.hass = fixtureHass;
       const setError = error => {
         const state = fixtureHass.states[vacuum];

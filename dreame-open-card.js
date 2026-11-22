@@ -140,6 +140,7 @@ const FRENCH = {
   "Switch floor": "Changer d’étage",
   "Confirm floor change": "Confirmer le changement d’étage",
   "Cancel": "Annuler",
+  "No obstacle photo available": "Aucune photo de cet obstacle",
   "Floor": "Étage",
   "Rooms": "Pièces",
   "Clean rooms": "Nettoyer les pièces",
@@ -1012,6 +1013,15 @@ const TEMPLATE = `
   #floor-dialog { color:inherit; background:var(--card-background-color,#fff); border:1px solid var(--divider-color,#ddd);
     border-radius:16px; max-width:calc(100% - 32px); }
   #floor-dialog::backdrop { background:#0006; }
+  #obstacle-dialog { color:inherit; background:var(--card-background-color,#fff); border:0;
+    border-radius:16px; width:min(520px,calc(100vw - 48px)); }
+  #obstacle-dialog::backdrop { background:#0008; backdrop-filter:blur(4px); }
+  #obstacle-dialog header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0; text-align:start; }
+  #obstacle-photo { width:100%; max-height:70dvh; object-fit:contain; }
+  #obstacle-no-photo { display:grid; place-items:center; min-height:160px; color:var(--secondary-text-color,#555); }
+  @media (max-width:600px) {
+    #obstacle-dialog { margin:auto auto 0; border-radius:16px 16px 0 0; }
+  }
   #dock-dialog header { display:flex; align-items:center; justify-content:space-between; padding:0; }
   .dock-status, .dock-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
   .dock-actions { grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); }
@@ -1126,6 +1136,11 @@ const TEMPLATE = `
       <button value="confirm" class="primary" data-i18n>Switch floor</button>
     </form>
   </dialog>
+  <dialog id="obstacle-dialog" aria-labelledby="obstacle-heading">
+    <header><h2 id="obstacle-heading"></h2><form method="dialog"><button data-i18n>Close</button></form></header>
+    <img id="obstacle-photo" alt="" hidden>
+    <p id="obstacle-no-photo" data-i18n>No obstacle photo available</p>
+  </dialog>
 </div></ha-card>`;
 
 function element(tag, text, attrs = {}) {
@@ -1155,6 +1170,16 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     map.addEventListener("click", (event) => this.pickOnMap(event));
     this.part("editor-detail").addEventListener("toggle", () => this.renderMapObjectLayers());
     this.part("floor-dialog").addEventListener("close", () => this.confirmFloorChange());
+    const obstacleDialog = this.part("obstacle-dialog");
+    const obstaclePhoto = this.part("obstacle-photo");
+    obstacleDialog.addEventListener("close", () => {
+      if (!obstacleDialog.open) obstaclePhoto.removeAttribute("src");
+    });
+    obstaclePhoto.addEventListener("load", () => { obstaclePhoto.hidden = false; });
+    obstaclePhoto.addEventListener("error", () => {
+      obstaclePhoto.hidden = true;
+      this.part("obstacle-no-photo").hidden = false;
+    });
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -1405,6 +1430,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.section("object-markers", markers, (node) => node.replaceChildren(...markers.map((marker) => {
       const obstacle = marker.kind === "obstacles";
       const button = this.button(obstacle ? null : marker.label, () => {
+        if (obstacle && button.getAttribute("aria-pressed") === "true") return this.openObstacle(marker);
         this.objectSelection = marker;
         for (const sibling of node.children) sibling.setAttribute("aria-pressed", String(sibling === button));
         this.renderObjectEditor();
@@ -1419,6 +1445,21 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       button.style.top = `${marker.y * 100}%`;
       return button;
     })));
+  }
+
+  openObstacle(marker) {
+    const dialog = this.part("obstacle-dialog");
+    if (dialog.open) return;
+    const photos = Object.entries(this.currentMap.obstacle_picture ?? {}).filter(([name]) => name.startsWith(`${marker.key}:`));
+    const url = photos.length === 1 ? localImage(photos[0][1]) : null;
+    const photo = this.part("obstacle-photo");
+    const matchesCamera = url?.split("?", 1)[0] === `/api/camera_map_obstacle_proxy/${this.mapCamera}`;
+    this.part("obstacle-heading").textContent = marker.label;
+    photo.hidden = true;
+    this.part("obstacle-no-photo").hidden = matchesCamera;
+    if (matchesCamera) photo.src = url;
+    else photo.removeAttribute("src");
+    dialog.showModal();
   }
 
   renderMapObjectLayers() {
@@ -1914,6 +1955,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const { entity, title } = this.config;
     const robotDevice = this.ha.entities?.[entity]?.device_id;
     const map_camera = this.config.map_camera ?? this.discoverMapCamera(robotDevice);
+    this.mapCamera = map_camera;
     const vacuum = this.ha.states[entity];
     const attrs = vacuum?.attributes ?? {};
     const camera = this.ha.states[map_camera];
@@ -1957,6 +1999,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.scope = scope;
       this.roomSelection.clear();
       this.objectSelection = null;
+      this.part("obstacle-dialog").close();
       this.resetRestrictionDraft();
       this.clearPicks();
     }
