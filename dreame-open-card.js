@@ -274,6 +274,13 @@ const roomPixel = (type) => type > 100 && type < 200 ? type - 100 : type;
 const isRoomFloor = (type) => type > 0 && type < 100;
 export const cleanablePixel = (type) => isRoomFloor(type) || type === 253 || type === 254;
 
+function unrotateMapPoint(x, y, rotation, extent = 1) {
+  if (rotation === 90) return [y, extent - x];
+  if (rotation === 180) return [extent - x, extent - y];
+  if (rotation === 270) return [extent - y, x];
+  return [x, y];
+}
+
 export function scenePixel(scene, [x, y]) {
   const col = Math.floor((x - scene.left) / scene.step);
   const row = Math.floor((y - scene.top) / scene.step);
@@ -783,6 +790,7 @@ function validateMapPresentation(maps) {
     if (!/^map_[1-9]\d*$/.test(key) || !floor || typeof floor !== "object" || Array.isArray(floor)) {
       throw new Error("map_config is invalid.");
     }
+    if (floor.rotation != null && ![0, 90, 180, 270].includes(floor.rotation)) throw new Error(`map_config.${key}.rotation is invalid.`);
     for (const name of ["opacity", "object_opacity"]) {
       if (floor[name] != null && (!Number.isFinite(floor[name]) || floor[name] < 0 || floor[name] > 1)) {
         throw new Error(`map_config.${key}.${name} must be between 0 and 1.`);
@@ -967,12 +975,21 @@ const TEMPLATE = `
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
+  #map-frame { display:contents; }
+  .quarter-turn #map-frame { display:grid; place-items:center; grid-template: minmax(0,1fr) / minmax(0,1fr);
+    container-type:size; width:100%; aspect-ratio:calc(1 / var(--map-image-ratio,1)); max-height:68vh; }
+  .panel-mode .quarter-turn #map-frame { max-height:58vh; }
+  .full-height .quarter-turn #map-frame { max-height:none; }
+  figure.ratio-frame.quarter-turn { grid-template-rows:minmax(0,1fr); }
+  figure.ratio-frame.quarter-turn #map-frame { height:100%; max-height:100%; aspect-ratio:auto; }
   figure.ratio-frame { width:100%; aspect-ratio:var(--map-aspect-ratio); max-height:68vh; container-type:size; }
   .panel-mode figure.ratio-frame { max-height:58vh; }
   .full-height figure.ratio-frame { max-height:none; }
   .full-height #map-layer { width:100%; }
   figure.ratio-frame #map-layer { width:min(100cqw,calc(100cqh * var(--map-image-ratio,1))); }
   :is(.full-height, .ratio-frame) #map { width:100%; max-width:100%; max-height:none; }
+  figure.quarter-turn #map-layer { max-width:none; width:min(100cqh,calc(100cqw * var(--map-image-ratio,1))); }
+  figure.quarter-turn #map { width:100%; max-width:none; max-height:none; }
   #map-layer #map { opacity:var(--map-opacity,1); }
   #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-layer.structured #map { opacity:0; }
@@ -1009,7 +1026,7 @@ const TEMPLATE = `
   #zone-overlay, #zone-overlay svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #zone-overlay polygon { fill:var(--map-active-area,#008dc53a); stroke:#006ab6; stroke-width:2;
     vector-effect:non-scaling-stroke; stroke-dasharray:5 3; }
-  #zone-overlay button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto;
+  #zone-overlay button { position:absolute; transform:translate(-50%,-50%) rotate(var(--map-counter-rotation,0deg)); pointer-events:auto;
     touch-action:none; cursor:grab; width:28px; height:28px; min-height:0; padding:0;
     border:2px solid #006ab6; border-radius:50%; color:#00588b; background:white; }
   #zone-list:empty { display:none; }
@@ -1045,7 +1062,7 @@ const TEMPLATE = `
   #editor-detail input[type=url] { width:100%; }
   .remote-live { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .remote-live input { width:100%; }
-  #room-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto;
+  #room-markers button { position:absolute; transform:translate(-50%,-50%) rotate(var(--map-counter-rotation,0deg)); pointer-events:auto;
     border-radius:20px; border:2px solid white; background:#253e59; color:white;
     min-height:32px; max-width:85%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; }
   #room-markers button[aria-pressed="true"] { background:#007d9d; z-index:1; }
@@ -1066,7 +1083,7 @@ const TEMPLATE = `
     border:2px solid white; border-radius:999px; background:var(--room-color);
     font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
   #object-markers { position:absolute; inset:0; pointer-events:none; opacity:var(--map-object-opacity,1); }
-  #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
+  #object-markers button { position:absolute; transform:translate(-50%,-50%) rotate(var(--map-counter-rotation,0deg)); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
   #object-markers button:has(.obstacle-label) { display:flex; align-items:center; gap:4px; padding:4px; }
@@ -1108,7 +1125,7 @@ const TEMPLATE = `
   <details id="menu"><summary aria-label="Menu"><ha-icon icon="mdi:dots-vertical" aria-hidden="true"></ha-icon></summary><div id="menu-items"></div></details>
   <div id="telemetry"></div>
   <div class="stage">
-    <figure id="figure" hidden><div id="map-layer"><img id="map" alt="Robot map"><canvas id="structured-map" aria-hidden="true" hidden></canvas><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></figure>
+    <figure id="figure" hidden><div id="map-frame"><div id="map-layer"><img id="map" alt="Robot map"><canvas id="structured-map" aria-hidden="true" hidden></canvas><div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div></div></div></figure>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -1933,7 +1950,11 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const canvas = this.part("structured-map");
     const img = this.part("map");
     const layer = this.part("map-layer");
-    if (img.naturalHeight) layer.style.setProperty("--map-image-ratio", String(img.naturalWidth / img.naturalHeight));
+    const figure = this.part("figure");
+    if (img.naturalHeight) figure.style.setProperty("--map-image-ratio", String(img.naturalWidth / img.naturalHeight));
+    figure.classList.toggle("quarter-turn", this.mapRotation % 180 === 90);
+    layer.style.transform = this.mapRotation ? `rotate(${this.mapRotation}deg)` : "";
+    layer.style.setProperty("--map-counter-rotation", `${-(this.mapRotation ?? 0)}deg`);
     const presentation = mapPresentation(this.config, this.mapIndex);
     const { dark, ...overrides } = this.config.override_colors ?? {};
     const colors = { ...overrides, ...(this.ha?.themes?.darkMode ? dark : {}) };
@@ -2000,6 +2021,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.calibration = image && liveMap ? map.calibration_points : null;
     this.currentMap = map;
     this.mapIndex = map.map_index ?? ((attrs.maps?.length ?? 0) <= 1 ? 1 : null);
+    const rotation = mapPresentation(this.config, this.mapIndex).rotation;
+    const nativeRotation = [0, 90, 180, 270].includes(map.rotation) ? map.rotation : 0;
+    this.mapRotation = rotation == null ? 0 : (rotation - nativeRotation + 360) % 360;
     const calibrated = Boolean(mapPoint(this.calibration, [0, 0]));
     const transformed = (display.rotation ?? 0) !== 0 || (display.scale ?? 1) !== 1 || (display.offset ?? [0, 0]).some((part) => part !== 0);
     this.mapPicking = calibrated && available && !transformed;
@@ -2247,8 +2271,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (!img.complete || !img.naturalWidth) return null;
     const rect = img.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
+    const [x, y] = unrotateMapPoint((event.clientX - rect.left) / rect.width,
+      (event.clientY - rect.top) / rect.height, this.mapRotation);
     if (x < 0 || x > 1 || y < 0 || y > 1) return null;
     const coords = mapPoint(this.calibration, [x * img.naturalWidth, y * img.naturalHeight]);
     return coords && { coords, pin: [x, y] };
@@ -2326,8 +2350,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (!Array.isArray(delta)) return;
       event.preventDefault();
       const img = this.part("map");
+      const direction = unrotateMapPoint(...delta, this.mapRotation, 0);
       const pixels = [img.naturalWidth, img.naturalHeight].map((size, axis) =>
-        Math.max(0, Math.min(size, position[axis] * size + delta[axis] * Math.max(1, size / 100))));
+        Math.max(0, Math.min(size, position[axis] * size + direction[axis] * Math.max(1, size / 100))));
       const coords = mapPoint(this.calibration, pixels);
       if (coords) this.resizeZone(index, corner, coords);
       [...this.part("zone-overlay").querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === label)?.focus();

@@ -160,6 +160,45 @@
       require(walls().length === 0 && !canvas.hidden, "Hiding walls also disabled the floor-plan renderer");
       card.setConfig(config);
       await waitFor(() => !canvas.hidden);
+      update(42, 7, { map_index: 1, rotation: 90 });
+      card.setConfig({ ...config, map_config: { map_1: { rotation: 180 } } });
+      const rotated = el("map").getBoundingClientRect();
+      const frame = el("figure").getBoundingClientRect();
+      require(Math.abs(rotated.width / rotated.height - 290 / 400) < .02
+        && rotated.left >= frame.left - 1 && rotated.right <= frame.right + 1,
+        "The per-floor rotation did not override the native angle without clipping");
+      button("modes", "Rooms").click();
+      el("map").dispatchEvent(new MouseEvent("click", { clientX: rotated.left + rotated.width * (1 - 100 / 290),
+        clientY: rotated.top + rotated.height * 290 / 400 }));
+      require(el("room-markers").querySelector('[data-room="2"]').getAttribute("aria-pressed") === "true",
+        "Clicking a rotated room selected the wrong map point");
+      const rotatedBadge = el("room-markers").querySelector('[data-room="2"]').getBoundingClientRect();
+      require(rotatedBadge.width > rotatedBadge.height, "A rotated floor turned the room labels sideways");
+      button("modes", "Clean a zone").click();
+      for (const [x, y] of [[290, 100], [310, 120]]) {
+        el("map").dispatchEvent(new MouseEvent("click", { clientX: rotated.left + rotated.width * (1 - y / 290),
+          clientY: rotated.top + rotated.height * x / 400 }));
+      }
+      const firstHandle = () => el("zone-overlay").querySelector("button");
+      const oldHandle = firstHandle()?.getBoundingClientRect();
+      firstHandle()?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", cancelable: true }));
+      const newHandle = firstHandle()?.getBoundingClientRect();
+      require(oldHandle && newHandle && newHandle.left > oldHandle.left && Math.abs(newHandle.top - oldHandle.top) <= 1,
+        "The keyboard moved a rotated zone handle in the wrong direction");
+      for (const [rotation, x, y] of [[270, 1 - 290 / 400, 1 - 100 / 290], [0, 100 / 290, 1 - 290 / 400]]) {
+        card.setConfig({ ...config, aspect_ratio: 1.5, map_config: { map_1: { rotation } } });
+        button("modes", "Rooms").click();
+        const bounds = el("map").getBoundingClientRect();
+        const fitted = el("figure").getBoundingClientRect();
+        require(bounds.left >= fitted.left - 1 && bounds.top >= fitted.top - 1
+          && bounds.right <= fitted.right + 1 && bounds.bottom <= fitted.bottom + 1, "A rotated floor escaped its configured frame");
+        el("map").dispatchEvent(new MouseEvent("click", { clientX: bounds.left + bounds.width * x, clientY: bounds.top + bounds.height * y }));
+        require(el("room-markers").querySelector('[data-room="2"]').getAttribute("aria-pressed") === "true",
+          "A supported floor rotation misaligned room selection");
+      }
+      update();
+      card.setConfig(config);
+      await waitFor(() => !canvas.hidden);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;
       const expected = dark ? [66, 99, 140, 255] : [164, 194, 244, 255];
       require(room.every((channel, i) => Math.abs(channel - expected[i]) <= 2), "Room does not render in its configured palette");
