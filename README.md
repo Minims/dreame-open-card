@@ -50,6 +50,8 @@ map:
 
 Set `left_handed: true` to move the map's action rail to the left. `hidden_card_objects` is a YAML list. Supported entries are `title`, `state`, `status` (telemetry), `menu`, `task_type` (mode selector), `controls` (mode selector and primary buttons), `action_buttons` (the map's action rail), `shortcuts` (native shortcuts on the home screen), and `cruising_history`. If you hide only `title`, the state takes its place. Other entries do not yet change the card.
 
+Set `aspect_ratio` to the desired map frame width divided by height (between `0.1` and `100`). The card fits the map inside that frame without stretching it. The normal viewport height limit still applies unless you set `full_height: true`; that option can make the card taller than the screen.
+
 Add Home Assistant `script.*` entities under `scripts` to list them in YAML order before the native shortcuts. When `hidden_card_objects` includes `shortcuts`, scripts remain on the home screen and native shortcuts move to the device settings panel.
 
 Use `hidden_objects` to hide supported map layers: `floor`, `walls`, `material`, `path`, `carpet`, `charger`, `vacuum`, `furniture`, `obstacle`, `doors`, `no_go`, `no_mop`, `virtual_wall`, `virtual_threshold`, `passable_threshold`, and `impassable_threshold`. Layers already drawn into the fallback camera image cannot be removed. Restrictions stay visible while the map editor is open.

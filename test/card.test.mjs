@@ -329,6 +329,10 @@ test("validates additive panel and map configuration", async () => {
   } }), true);
   assert.throws(() => validateCardConfig({ override_colors: { wall: "url(/local/wall.png)" } }), /override_colors/);
   assert.throws(() => validateCardConfig({ override_colors: { segment: [["#112233"]] } }), /override_colors/);
+  assert.equal(validateCardConfig({ aspect_ratio: 1.5, full_height: true }), true);
+  assert.throws(() => validateCardConfig({ aspect_ratio: 0.05 }), /aspect_ratio/);
+  assert.throws(() => validateCardConfig({ aspect_ratio: "1.5" }), /aspect_ratio/);
+  assert.throws(() => validateCardConfig({ full_height: "true" }), /full_height/);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {

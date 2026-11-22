@@ -808,6 +808,9 @@ function validateOverrideColors(colors, theme = false) {
 }
 
 export function validateCardConfig(config = {}) {
+  if (config.aspect_ratio != null && (!Number.isFinite(config.aspect_ratio)
+    || config.aspect_ratio < .1 || config.aspect_ratio > 100)) throw new Error("aspect_ratio must be between 0.1 and 100.");
+  if (config.full_height != null && typeof config.full_height !== "boolean") throw new Error("full_height must be a boolean.");
   if (config.left_handed != null && typeof config.left_handed !== "boolean") throw new Error("left_handed must be a boolean.");
   if (config.scripts != null && (!Array.isArray(config.scripts)
     || !config.scripts.every((id) => typeof id === "string" && /^script\.[a-z0-9_]+$/.test(id)))) {
@@ -954,6 +957,12 @@ const TEMPLATE = `
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
+  figure.ratio-frame { width:100%; aspect-ratio:var(--map-aspect-ratio); max-height:68vh; container-type:size; }
+  .panel-mode figure.ratio-frame { max-height:58vh; }
+  .full-height figure.ratio-frame { max-height:none; }
+  .full-height #map-layer { width:100%; }
+  figure.ratio-frame #map-layer { width:min(100cqw,calc(100cqh * var(--map-image-ratio,1))); }
+  :is(.full-height, .ratio-frame) #map { width:100%; max-width:100%; max-height:none; }
   #map-layer #map { opacity:var(--map-opacity,1); }
   #structured-map { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-layer.structured #map { opacity:0; }
@@ -976,7 +985,9 @@ const TEMPLATE = `
   #modes button[aria-pressed="true"], #quick button, #basic button { background:var(--accent); color:#fff; }
   #modes button, #quick button, #basic button { border-radius:24px; border:0; }
   #quick button { width:40px; height:40px; padding:0; box-shadow:0 2px 4px #0004; }
-  #basic button { flex:1 1 auto; font-size:13px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+  #basic { align-items:stretch; }
+  #basic button { flex:1 1 calc(50% - 8px); min-width:0; overflow-wrap:anywhere;
+    font-size:13px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
     background:#007d9d; box-shadow:0 2px 4px #0004; }
   .body:not([data-mode="global"]) #basic [data-action="vacuum.start"] { display:none; }
   button ha-icon { --mdc-icon-size:20px; vertical-align:middle; }
@@ -1188,6 +1199,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const scheme = config.color_scheme ?? "dreame_light";
     const body = this.shadowRoot.querySelector(".body");
     body.classList.toggle("left-handed", config.left_handed === true);
+    body.classList.toggle("full-height", config.full_height === true);
+    const figure = this.part("figure");
+    figure.classList.toggle("ratio-frame", config.aspect_ratio != null);
+    figure.style.setProperty("--map-aspect-ratio", String(config.aspect_ratio ?? ""));
     this.applyHomeVisibility(config.hidden_card_objects ?? []);
     body.classList.remove("scheme-dreame-dark", "scheme-dreame-light", "scheme-grayscale");
     body.classList.add(`scheme-${scheme === "dreame_dark" ? "dreame-dark" : scheme === "grayscale" ? "grayscale" : "dreame-light"}`);
@@ -1809,6 +1824,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const canvas = this.part("structured-map");
     const img = this.part("map");
     const layer = this.part("map-layer");
+    if (img.naturalHeight) layer.style.setProperty("--map-image-ratio", String(img.naturalWidth / img.naturalHeight));
     const presentation = mapPresentation(this.config, this.mapIndex);
     const { dark, ...overrides } = this.config.override_colors ?? {};
     const colors = { ...overrides, ...(this.ha?.themes?.darkMode ? dark : {}) };
