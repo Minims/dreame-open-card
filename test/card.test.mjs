@@ -324,6 +324,11 @@ test("validates additive panel and map configuration", async () => {
   assert.throws(() => validateCardConfig({ map_config: { map_1: { opacity: 1.1 } } }), /map_config/i);
   assert.equal(validateCardConfig({ scripts: ["script.mop_kitchen", "script.sweep_living_room"] }), true);
   assert.throws(() => validateCardConfig({ scripts: ["switch.kitchen"] }), /scripts/i);
+  assert.equal(validateCardConfig({ override_colors: {
+    wall: "#334455", path: "rgba(100,120,130,.5)", segment: [["#112233", "#445566"]], dark: { wall: "#667788" },
+  } }), true);
+  assert.throws(() => validateCardConfig({ override_colors: { wall: "url(/local/wall.png)" } }), /override_colors/);
+  assert.throws(() => validateCardConfig({ override_colors: { segment: [["#112233"]] } }), /override_colors/);
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {

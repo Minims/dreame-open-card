@@ -29,6 +29,7 @@
   function update(frame = 42, floor = 7, restrictions = {}) {
     card.hass = {
       locale: { language: "en" },
+      themes: { darkMode: dark },
       states: {
         [vacuum]: { state: "docked", attributes: { friendly_name: "Fixture vacuum", battery_level: 82,
           selected_map_id: floor, maps: [{ id: 7, name: "Downstairs" }, { id: 8, name: "Upstairs" }],
@@ -279,6 +280,22 @@
       update(44, 7, { map_index: 2 });
       require(getComputedStyle(canvas).opacity === "1" && pixel(25, 140)[3] === 0,
         "An unconfigured map index did not revert to the global layer settings");
+      card.setConfig(config);
+
+      card.setConfig({ ...config, override_colors: {
+        wall: "#123456", path: "rgba(239,80,30,1)", segment: [["#ff00a0", "#20ef10"]],
+        dark: { wall: "#563412" },
+      } });
+      const wall = dark ? [86, 52, 18] : [18, 52, 86];
+      require(wall.every((channel, i) => Math.abs(pixel(25, 140)[i] - channel) <= 2),
+        "Wall color override did not respect the dashboard theme");
+      require(pixel(249, 101)[0] > 220, "Path color override was not applied");
+      button("modes", "Rooms").click();
+      const overrideRoom = el("room-markers").querySelector('[data-room="1"]');
+      require(pixel(90, 100)[0] > 230 && pixel(90, 100)[1] < 20, "Normal room color override was not applied");
+      overrideRoom.click();
+      require(pixel(90, 100)[0] < 60 && pixel(90, 100)[1] > 220,
+        "Selecting a room did not repaint it with its selected override");
       card.setConfig(config);
       output.value = `PASS: ${config.mode}, ${config.color_scheme}`;
     } catch (error) {

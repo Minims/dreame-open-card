@@ -56,6 +56,8 @@ Use `hidden_objects` to hide supported map layers: `floor`, `walls`, `material`,
 
 `map_config.map_1` applies to the first saved-map index, not map ID 1. For each index, `opacity` sets the map image opacity, `object_opacity` sets the opacity of the robot, dock, furniture and markers, and `hidden_objects` replaces the global list for that floor. Both opacities range from 0 to 1.
 
+`override_colors` accepts hex or comma-separated `rgb()`/`rgba()` colors. Supported keys are `floor`, `wall`, `path`, `carpet`, `active_area`, `no_go`, `no_mop`, `virtual_wall`, `icon_background`, `text`, and `segment`. The `segment` list contains `[normal, selected]` pairs for room fills. Colors in `dark` override the base list when the Home Assistant dashboard uses a dark theme. The fallback camera image cannot be recolored.
+
 If the card cannot discover your settings and maintenance entities, list them explicitly.
 Set a `features` entry to `false` to hide its dedicated view. These switches do not change Home Assistant permissions or remove entities from the generic settings list.
 
