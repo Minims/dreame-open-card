@@ -59,7 +59,7 @@
         script: { turn_on: {} },
         select: { select_option: {} },
         dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
-          "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map"].map(name => [`vacuum_${name}`, {}])),
+          "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map", "rename_segment"].map(name => [`vacuum_${name}`, {}])),
       },
       callService: async (domain, service, payload, target) => { calls.push({ domain, service, payload, target }); },
     };
@@ -275,6 +275,20 @@
       require(calls.some(c => c.domain === "select" && c.service === "select_option" && c.payload.option === "turbo"),
         "Clicking turbo did not call select_option with turbo");
       cleaningDetail.open = false;
+      const editDetail = el("edit-detail");
+      editDetail.open = true;
+      el("room-markers").querySelector('[data-room="1"]').click();
+      const roomDialog = el("room-dialog");
+      require(roomDialog.open, "Room editor dialog did not open when clicking a room in edit mode");
+      require(el("room-dialog-heading").textContent === "1: Living room", "Room editor dialog heading is incorrect");
+      require(el("room-type-grid").children.length === 15, "Room editor did not render 15 preset room types");
+      const kitchenTypeBtn = [...el("room-type-grid").children].find(btn => btn.getAttribute("aria-label") === "Kitchen");
+      kitchenTypeBtn.click();
+      require(el("room-name-input").value === "Kitchen", "Selecting Kitchen did not fill the room name input");
+      el("room-name-form").dispatchEvent(new Event("submit", { cancelable: true }));
+      require(calls.some(c => c.service === "vacuum_rename_segment" && c.payload.segment_id === 1 && c.payload.segment_name === "Kitchen"),
+        "Submitting room dialog did not call vacuum_rename_segment with segment_id and name");
+      editDetail.open = false;
       update();
       card.setConfig(config);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;

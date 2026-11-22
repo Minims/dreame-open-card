@@ -162,6 +162,23 @@ const FRENCH = {
   "Confirm this action on the robot": "Confirmer l’action sur le robot",
   "Apply": "Appliquer",
   "Confirm the action": "Confirmez l’action",
+  "Room name": "Nom de la pièce",
+  "Rename room": "Renommer la pièce",
+  "Living room": "Salon",
+  "Bedroom": "Chambre",
+  "Study": "Bureau",
+  "Kitchen": "Cuisine",
+  "Dining room": "Salle à manger",
+  "Bathroom": "Salle de bain",
+  "Balcony": "Balcon",
+  "Utility room": "Buanderie",
+  "Pantry": "Cellier",
+  "Closet": "Dressing",
+  "Meeting room": "Salle de réunion",
+  "Office": "Bureau",
+  "Fitness": "Fitness",
+  "Lounge": "Détente",
+  "Children's room": "Chambre d’enfant",
 };
 
 export function languageFor(hass) {
@@ -542,6 +559,13 @@ const DOCK_ACTIONS = [
   ["manual_dust_bag_drying", "Dry dust bag", "fire"], ["start_auto_empty", "Empty dust bag", "delete-empty"],
 ];
 const DOCK_SENSORS = ["clean_water_tank_status", "dirty_water_tank_status", "dust_bag_status", "detergent_status"];
+const ROOM_TYPES = [
+  ["Living room", "sofa-outline"], ["Bedroom", "bed-king-outline"], ["Study", "bookshelf"],
+  ["Kitchen", "stove"], ["Dining room", "silverware-fork-knife"], ["Bathroom", "toilet"],
+  ["Balcony", "flower-tulip-outline"], ["Utility room", "washing-machine"], ["Pantry", "cupboard-outline"],
+  ["Closet", "hanger"], ["Meeting room", "presentation"], ["Office", "desktop-classic"],
+  ["Fitness", "dumbbell"], ["Lounge", "gamepad-variant-outline"], ["Children's room", "baby-carriage"],
+];
 const CLEANING_CONTROLS = [
   ["cleaning_mode", "Cleaning mode", "select", { sweeping: "broom", mopping: "water", sweeping_and_mopping: "hydro-power", mopping_after_sweeping: "broom" }],
   ["suction_level", "Suction level", "select", { quiet: "fan-speed-1", standard: "fan-speed-2", strong: "fan-speed-3", turbo: "fan-alert" }],
@@ -1076,10 +1100,17 @@ const TEMPLATE = `
   #floor-dialog { color:inherit; background:var(--card-background-color,#fff); border:1px solid var(--divider-color,#ddd);
     border-radius:16px; max-width:calc(100% - 32px); }
   #floor-dialog::backdrop { background:#0006; }
-  #obstacle-dialog { color:inherit; background:var(--card-background-color,#fff); border:0;
+  #obstacle-dialog, #room-dialog { color:inherit; background:var(--card-background-color,#fff); border:0;
     border-radius:16px; width:min(520px,calc(100vw - 48px)); }
-  #obstacle-dialog::backdrop { background:#0008; backdrop-filter:blur(4px); }
-  #obstacle-dialog header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0; text-align:start; }
+  #obstacle-dialog::backdrop, #room-dialog::backdrop { background:#0008; backdrop-filter:blur(4px); }
+  #obstacle-dialog header, #room-dialog header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0; text-align:start; }
+  #room-type-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:8px; max-height:40vh; overflow-y:auto; padding:8px 0; }
+  .room-type-btn { display:grid; place-items:center; gap:4px; padding:10px 4px; border:0; border-radius:12px;
+    background:var(--secondary-background-color,#f5f5f5); color:inherit; cursor:pointer; font:inherit; font-size:11px; }
+  .room-type-btn[aria-pressed="true"] { background:var(--primary-color,#00bcd4); color:white; }
+  .room-type-btn ha-icon { --mdc-icon-size:24px; width:24px; height:24px; }
+  #room-name-form { display:flex; gap:8px; margin-top:12px; }
+  #room-name-input { flex:1; padding:8px 12px; border-radius:10px; border:1px solid var(--divider-color,#ddd); font:inherit; }
   #obstacle-photo { width:100%; max-height:70dvh; object-fit:contain; }
   #obstacle-no-photo { display:grid; place-items:center; gap:8px; min-height:160px; color:var(--secondary-text-color,#555); }
   #obstacle-no-photo ha-icon { --mdc-icon-size:48px; width:48px; height:48px; opacity:0.6; }
@@ -1229,6 +1260,14 @@ const TEMPLATE = `
     <header><h2 id="obstacle-heading"></h2><form method="dialog"><button data-i18n>Close</button></form></header>
     <img id="obstacle-photo" alt="" hidden>
     <div id="obstacle-no-photo"><ha-icon icon="mdi:image-off-outline" aria-hidden="true"></ha-icon><span data-i18n>No obstacle photo available</span></div>
+  </dialog>
+  <dialog id="room-dialog" aria-labelledby="room-dialog-heading">
+    <header><h2 id="room-dialog-heading"></h2><form method="dialog"><button data-i18n>Close</button></form></header>
+    <div id="room-type-grid"></div>
+    <form id="room-name-form" method="dialog">
+      <input id="room-name-input" type="text" placeholder="Room name" required>
+      <button type="submit" class="primary" data-i18n>Apply</button>
+    </form>
   </dialog>
 </div></ha-card>`;
 
@@ -1491,7 +1530,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       return position ? [[id, label, symbol, ...position]] : [];
     });
     this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, symbol, x, y]) => {
-      const button = this.button(null, () => this.toggleRoom(id, !this.roomSelection.has(id)));
+      const button = this.button(null, () => {
+        if (this.part("edit-detail").open) return this.openRoomDialog(id, label);
+        this.toggleRoom(id, !this.roomSelection.has(id));
+      });
       button.setAttribute("aria-label", label);
       const roomIcon = icon(symbol);
       roomIcon.className = "room-icon";
@@ -1553,6 +1595,35 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.part("obstacle-no-photo").hidden = matchesCamera;
     if (matchesCamera) photo.src = url;
     else photo.removeAttribute("src");
+    dialog.showModal();
+  }
+
+  openRoomDialog(roomId, roomName) {
+    const dialog = this.part("room-dialog");
+    if (dialog.open) return;
+    this.part("room-dialog-heading").textContent = `${roomId}: ${roomName ?? ""}`.trim();
+    const input = this.part("room-name-input");
+    input.value = roomName ?? "";
+    const grid = this.part("room-type-grid");
+    grid.replaceChildren();
+    for (const [type, iconName] of ROOM_TYPES) {
+      const btn = element("button", null, { type: "button", class: "room-type-btn",
+        "aria-label": this.t(type), "aria-pressed": String(roomName === this.t(type)) });
+      btn.append(icon(iconName), element("span", this.t(type)));
+      btn.addEventListener("click", () => {
+        input.value = this.t(type);
+        for (const sibling of grid.children) sibling.setAttribute("aria-pressed", String(sibling === btn));
+      });
+      grid.append(btn);
+    }
+    const form = this.part("room-name-form");
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      dialog.close();
+      if (input.value) {
+        await this.run(dreame("rename_segment"), { segment_id: Number(roomId), segment_name: input.value });
+      }
+    };
     dialog.showModal();
   }
 
@@ -2379,6 +2450,16 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     if (editor.open && !editor.hidden && this.canEditRestrictions()
       && this.selectRestrictionAt(this.mapPointer(event))) return;
+    if (this.part("edit-detail").open && this.structuredVisible) {
+      const pick = this.mapPointer(event);
+      if (pick) {
+        const pixel = scenePixel(this.mapScene, pick.coords);
+        if (isRoomFloor(pixel) && this.markerRooms.some(([room]) => room === pixel)) {
+          const roomEntry = this.markerRooms.find(([room]) => room === pixel);
+          return this.openRoomDialog(pixel, roomEntry?.[2]);
+        }
+      }
+    }
     if (this.mode === "room" && this.structuredVisible) {
       const pick = this.mapPointer(event);
       if (!pick) return;
