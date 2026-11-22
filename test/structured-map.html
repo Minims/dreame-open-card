@@ -212,6 +212,22 @@
         require(el("room-markers").querySelector('[data-room="2"]').getAttribute("aria-pressed") === "true",
           "A supported floor rotation misaligned room selection");
       }
+      card.setConfig(config);
+      const defaultMapRect = el("map").getBoundingClientRect();
+      card.setConfig({ ...config, map_config: { map_1: { width: 40, height: 30, left: 14, top: 10 } } });
+      const fittedMap = el("map").getBoundingClientRect();
+      const figureRect = el("figure").getBoundingClientRect();
+      require(fittedMap.width < defaultMapRect.width * .75, "Larger map dimensions did not zoom out");
+      require(fittedMap.left >= figureRect.left - 1 && fittedMap.top >= figureRect.top - 1
+        && fittedMap.right <= figureRect.right + 1 && fittedMap.bottom <= figureRect.bottom + 1,
+        "A fitted map escaped its figure container");
+      button("modes", "Rooms").click();
+      const fittedMapClick = el("map").getBoundingClientRect();
+      el("map").dispatchEvent(new MouseEvent("click", {
+        clientX: fittedMapClick.left + fittedMapClick.width * 290 / 400,
+        clientY: fittedMapClick.top + fittedMapClick.height * 122 / 290 }));
+      require(el("room-markers").querySelector('[data-room="2"]').getAttribute("aria-pressed") === "true",
+        "A custom map fit misaligned room selection");
       update();
       card.setConfig(config);
       await waitFor(() => !canvas.hidden);

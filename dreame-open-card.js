@@ -997,6 +997,7 @@ const TEMPLATE = `
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
   #map-frame { display:contents; }
+  figure.map-fit #map-frame { display:grid; place-items:center; width:100%; aspect-ratio:var(--fit-ratio, var(--map-image-ratio,1)); overflow:hidden; }
   .quarter-turn #map-frame { display:grid; place-items:center; grid-template: minmax(0,1fr) / minmax(0,1fr);
     container-type:size; width:100%; aspect-ratio:calc(1 / var(--map-image-ratio,1)); max-height:68vh; }
   .panel-mode .quarter-turn #map-frame { max-height:58vh; }
@@ -2024,6 +2025,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     layer.style.setProperty("--map-object-opacity", String(presentation.object_opacity ?? 1));
     this.renderMapAsset("map-background", presentation.background_image, img);
     this.renderMapAsset("map-foreground", presentation.overlay_image, img);
+    this.applyMapFit(presentation, img);
     for (const key of ["active_area", "no_go", "no_mop", "virtual_wall", "wall", "carpet", "icon_background", "text"]) {
       layer.style.setProperty(`--map-${key.replaceAll("_", "-")}`, colors[key] ?? "");
     }
@@ -2059,6 +2061,37 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       width: `${size[0] / width * 100}%`, height: `${size[1] / height * 100}%`, opacity: String(asset.opacity ?? 1) });
     node.style.setProperty("--art-angle", `${Math.atan2(horizontal[1], horizontal[0])}rad`);
     if (node.getAttribute("src") !== asset.url) node.setAttribute("src", asset.url);
+  }
+
+  applyMapFit(presentation, image) {
+    const figure = this.part("figure");
+    const frame = this.part("map-frame");
+    const step = this.mapScene?.step;
+    const hasFit = step && ["left", "top", "width", "height", "scale"].some((key) => presentation[key] != null);
+    figure.classList.toggle("map-fit", hasFit);
+    if (!hasFit) {
+      frame.style.removeProperty("transform");
+      figure.style.removeProperty("--fit-ratio");
+      return;
+    }
+    const w = image.naturalWidth, h = image.naturalHeight;
+    const project = (point) => projectPoint(this.calibration, point, "vacuum", "map");
+    const origin = project([0, 0]), unitX = project([step, 0]), unitY = project([0, -step]);
+    if (!origin || !unitX || !unitY) return;
+    const pxPerStepX = Math.hypot(unitX[0] - origin[0], unitX[1] - origin[1]);
+    const pxPerStepY = Math.hypot(unitY[0] - origin[0], unitY[1] - origin[1]);
+    const viewW = (presentation.width ?? w / pxPerStepX) * pxPerStepX;
+    const viewH = (presentation.height ?? h / pxPerStepY) * pxPerStepY;
+    const centerVac = [(presentation.left ?? w / pxPerStepX / 2) * step,
+      (presentation.top ?? h / pxPerStepY / 2) * step];
+    const center = project(centerVac);
+    if (!center) return;
+    const scaleOverride = presentation.scale ?? 1;
+    const s = Math.min(viewW / w, viewH / h) / scaleOverride;
+    const tx = (w / 2 - center[0]) / w;
+    const ty = (h / 2 - center[1]) / h;
+    frame.style.transform = `scale(${1 / s}) translate(${tx * 100}%, ${ty * 100}%)`;
+    figure.style.setProperty("--fit-ratio", String(viewW / viewH));
   }
 
   update() {
