@@ -244,6 +244,12 @@
       require(canvas.getContext("2d").getImageData(282, 87, 1, 1).data[0] < (dark ? 135 : 210),
         "furniture_image did not hide the rendered furniture silhouette");
       require(el("object-markers").querySelector('[data-object="furniture:0"] ha-icon'), "Furniture without its silhouette lost its marker");
+      update(42, 7, { map_index: 1 });
+      card.setConfig({ ...config, map_config: { map_1: { object_scale: 2, font_size: 8 } } });
+      button("modes", "Rooms").click();
+      const scaledRoom = el("room-markers").querySelector('[data-room="1"]');
+      require(getComputedStyle(scaledRoom).scale === "2" && getComputedStyle(scaledRoom).fontSize === "8px",
+        "object_scale and font_size did not apply to room markers");
       update();
       card.setConfig(config);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;

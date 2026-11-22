@@ -875,7 +875,9 @@ export function validateCardConfig(config = {}) {
   }
   if (config.color_scheme != null && !COLOR_SCHEMES.includes(config.color_scheme)) throw new Error("color_scheme is invalid.");
   if (config.icon_set != null && !ICON_SETS.includes(config.icon_set)) throw new Error("icon_set is invalid.");
-  if (config.locked != null && !["never", "only_touch"].includes(config.locked)) throw new Error("locked is invalid.");
+  if (config.locked != null && !["auto", "never", "only_touch", "always"].includes(config.locked)) throw new Error("locked is invalid.");
+  if (config.touch_lock != null && (!Number.isSafeInteger(config.touch_lock) || config.touch_lock < 100 || config.touch_lock > 400)) throw new Error("touch_lock must be 100–400.");
+  if (config.disable_haptic != null && typeof config.disable_haptic !== "boolean") throw new Error("disable_haptic must be a boolean.");
   return true;
 }
 
@@ -1093,7 +1095,9 @@ const TEMPLATE = `
   #room-markers button[data-order]::before { content:attr(data-order) " · "; }
   #room-markers :is(.room-icon, .room-order, .room-check) { display:none; }
   .structured #room-markers button { display:flex; align-items:center; gap:4px; overflow:visible;
-    background:var(--map-icon-background,var(--room-color)); color:var(--map-text,#162b40); border:0; padding:4px 9px; font-size:12px; font-weight:600; }
+    background:var(--map-icon-background,var(--room-color)); color:var(--map-text,#162b40); border:0; padding:4px 9px;
+    font-size:var(--map-font-size, 12px); font-weight:600;
+    scale:var(--map-object-scale, 1); }
   .structured #room-markers .room-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .structured #room-markers .room-icon { display:block; flex:none; --mdc-icon-size:15px; width:15px; height:15px; }
   .structured #room-markers button[aria-pressed="true"] { background:#fff; color:#162b40; }
@@ -1113,7 +1117,8 @@ const TEMPLATE = `
   #map-layer.hide-room-name #room-markers .room-icon { display:block; }
   #object-markers { position:absolute; inset:0; pointer-events:none; opacity:var(--map-object-opacity,1); }
   #object-markers button { position:absolute; transform:translate(-50%,-50%) rotate(var(--map-counter-rotation,0deg)); pointer-events:auto; min-height:28px;
-    padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
+    padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white;
+    font-size:var(--map-font-size, 11px); scale:var(--map-object-scale, 1); }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
   #object-markers button:has(.obstacle-label) { display:flex; align-items:center; gap:4px; padding:4px; }
   #object-markers button[aria-pressed="false"] .obstacle-label { display:none; }
@@ -2023,6 +2028,8 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     canvas.style.opacity = String(presentation.opacity ?? 1);
     layer.style.setProperty("--map-opacity", String(presentation.opacity ?? 1));
     layer.style.setProperty("--map-object-opacity", String(presentation.object_opacity ?? 1));
+    layer.style.setProperty("--map-object-scale", String(presentation.object_scale ?? 1));
+    layer.style.setProperty("--map-font-size", presentation.font_size != null ? `${presentation.font_size}px` : "");
     this.renderMapAsset("map-background", presentation.background_image, img);
     this.renderMapAsset("map-foreground", presentation.overlay_image, img);
     this.applyMapFit(presentation, img);
