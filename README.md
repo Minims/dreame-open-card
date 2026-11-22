@@ -26,7 +26,7 @@ entity: vacuum.dreame
 map_camera: camera.dreame_map
 ```
 
-`map_camera` and `title` are optional. Use a **Panel** view for a full-width card. The card also supports an internal responsive panel mode and additive map display settings:
+`map_camera` and `title` are optional. Without `map_camera`, the card discovers the live Dreame map camera when exactly one is registered for the vacuum's device; saved-map cameras are not used. Use a **Panel** view for a full-width card. The card also supports an internal responsive panel mode and additive map display settings:
 
 ```yaml
 type: custom:dreame-open-card
@@ -88,7 +88,7 @@ The card follows the Home Assistant frontend language. It displays French for Fr
 - View consumable estimates in **Accessory usage**, and change exposed device settings through the generic controls. Scheduling controls depend on the entities available on the instance.
 - Browse cleaning and cruising history from the integration's history sensors, with inline session maps when the camera supplies a matching image. Preview recovery and Wi-Fi maps when available, open obstacle photos, and use step-by-step remote control.
 - Open **Map editor** to add, resize or remove rectangular no-go and no-mopping areas. Select an existing area on the map or from the numbered list, then pick two new corners to resize it or choose **Remove area**. Review the preview and check the confirmation box before applying. The editor requires the active floor and all three restriction lists (virtual walls, no-go areas and no-mopping areas), and waits for the camera after a write or floor switch. If the update cannot be confirmed, verify the map in Home Assistant before reloading the card.
-- Map objects with valid calibration data can appear as markers for obstacles, carpets and furniture. Structured mode draws door segments and simplified silhouettes for known furniture such as beds, sofas, tables, storage, appliances and pet items when the matching frame contains their geometry. Unknown types and furniture in hidden rooms are not drawn as silhouettes. Obstacle ignore/restore is available in the advanced action form when supported.
+- Map objects with valid calibration data can appear as markers for obstacles, carpets and furniture. Detected obstacles show an icon until selected, then display their detection label. Structured mode draws door segments and simplified silhouettes for known furniture such as beds, sofas, tables, storage, appliances and pet items when the matching frame contains their geometry. Unknown types and furniture in hidden rooms are not drawn as silhouettes. Obstacle ignore/restore is available in the advanced action form when supported.
 - View discovered schedules and shortcuts when the integration exposes them. Existing schedule/shortcut content is shown read-only except for supported shortcut execution.
 - Remote control sends a single step only when you press **Move one step**. Adjusting the sliders does not send commands.
 - Rename, split and merge rooms, back up and restore maps, and edit walls, restricted zones, carpets, furniture and floor materials through action forms. Advanced actions require confirmation. The field names match the Home Assistant action schema.

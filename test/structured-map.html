@@ -80,6 +80,18 @@
       const canvas = el("structured-map");
       await waitFor(() => !canvas.hidden);
       const fixtureHass = card.ha;
+      card.hass = { ...fixtureHass, entities: {
+        [vacuum]: { device_id: "robot" },
+        [camera]: { device_id: "robot", platform: "dreame_vacuum", translation_key: "map" },
+        "camera.saved": { device_id: "robot", platform: "dreame_vacuum", translation_key: "saved_map" },
+        "camera.other_robot": { device_id: "other", platform: "dreame_vacuum", translation_key: "map" },
+      } };
+      card.setConfig({ entity: vacuum });
+      require(!el("figure").hidden && el("map").getAttribute("src") === fixtureHass.states[camera].attributes.entity_picture,
+        "Entity-only configuration did not discover the robot's live map camera");
+      card.setConfig(config);
+      card.hass = fixtureHass;
+      await waitFor(() => !canvas.hidden);
       const setRobotName = friendly_name => {
         const state = fixtureHass.states[vacuum];
         card.hass = { ...fixtureHass, entities: { [vacuum]: { device_id: "eve" } },
@@ -93,6 +105,20 @@
       card.setConfig(config);
       setRobotName("Eve Upstairs");
       require(el("title").textContent === "Eve Upstairs", "A distinct vacuum name was replaced by the device name");
+      card.hass = fixtureHass;
+      update(42, 7, { obstacles: {
+        1: { type: "Base", x: 200, y: 400 }, 2: { type: "Base", x: 600, y: 400 },
+        3: { type: "Meuble bloquant le robot", x: 800, y: 400 },
+      } });
+      const obstacles = [...el("object-markers").querySelectorAll('[data-object^="obstacles:"]')];
+      const showsLabel = marker => Boolean(marker.querySelector(".obstacle-label")?.getBoundingClientRect().width);
+      require(obstacles.length === 3 && obstacles.every(marker => marker.querySelector("ha-icon") && !showsLabel(marker)),
+        "Obstacle labels clutter the map before selection");
+      obstacles[2].click();
+      require(showsLabel(obstacles[2]) && obstacles[2].getAttribute("aria-label") === "Meuble bloquant le robot",
+        "Selecting an obstacle did not show its detection label");
+      obstacles[0].click();
+      require(showsLabel(obstacles[0]) && !showsLabel(obstacles[2]), "More than one obstacle label stays visible");
       card.hass = fixtureHass;
       const setError = error => {
         const state = fixtureHass.states[vacuum];
@@ -264,6 +290,17 @@
       require(el("map-objects").hidden || !el("map-objects").querySelector("line.door"), "Stale structured door is visible in camera fallback");
       require(el("map-objects").hidden || !el("map-objects").querySelector(".draft"), "Stale draft is still visible");
       update(44, 7);
+      await waitFor(() => !canvas.hidden);
+      const readyHass = card.ha;
+      card.setConfig({ ...config, hidden_card_objects: ["map_change_confirmation"] });
+      card.hass = { ...readyHass, callService: async () => { throw new Error("Floor change refused"); } };
+      el("floors").querySelector("select").value = "8";
+      button("floors", "Switch floor").click();
+      await waitFor(() => el("result").textContent.includes("Floor change refused"));
+      require(!button("floors", "Switch floor").disabled && card.mapPicking,
+        "A rejected floor change left the controls or map locked");
+      card.hass = readyHass;
+      card.setConfig(config);
       await waitFor(() => !canvas.hidden);
       require(isWhite(301, 170) && !isWhite(301, 165) && !isWhite(307, 170),
         "Unknown heading should show a robot without a directional arrow");

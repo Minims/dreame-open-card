@@ -1052,6 +1052,9 @@ const TEMPLATE = `
   #object-markers button { position:absolute; transform:translate(-50%,-50%); pointer-events:auto; min-height:28px;
     padding:4px 8px; border:2px solid white; border-radius:16px; background:#7b5bad; color:white; font-size:11px; }
   #object-markers button[aria-pressed="true"] { background:#007d9d; }
+  #object-markers button:has(.obstacle-label) { display:flex; align-items:center; gap:4px; padding:4px; }
+  #object-markers button[aria-pressed="false"] .obstacle-label { display:none; }
+  #object-markers button ha-icon { --mdc-icon-size:16px; width:16px; height:16px; }
   #map-objects, #map-objects svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
   #map-objects .wall { stroke:var(--map-virtual-wall,#0b8fe3); stroke-width:4; }
@@ -1243,7 +1246,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     return entity ? { entity } : {};
   }
 
-  getCardSize() { return this.config?.map_camera ? 8 : 4; }
+  getCardSize() { return this.config?.map_camera || !this.part("figure").hidden ? 8 : 4; }
 
   set hass(hass) {
     this.ha = hass;
@@ -1400,11 +1403,16 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     target.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || !markers.length;
     if (target.hidden) return;
     this.section("object-markers", markers, (node) => node.replaceChildren(...markers.map((marker) => {
-      const button = this.button(marker.label, () => {
+      const obstacle = marker.kind === "obstacles";
+      const button = this.button(obstacle ? null : marker.label, () => {
         this.objectSelection = marker;
         for (const sibling of node.children) sibling.setAttribute("aria-pressed", String(sibling === button));
         this.renderObjectEditor();
       });
+      if (obstacle) {
+        button.setAttribute("aria-label", marker.label);
+        button.append(icon("alert-circle-outline"), element("span", marker.label, { class: "obstacle-label" }));
+      }
       button.dataset.object = `${marker.kind}:${marker.key}`;
       button.setAttribute("aria-pressed", String(this.objectSelection?.kind === marker.kind && this.objectSelection?.key === marker.key));
       button.style.left = `${marker.x * 100}%`;
@@ -1586,7 +1594,11 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.pendingFloor = floor;
     this.cancelRestrictionEdit();
     this.update();
-    await this.run(dreame("select_map"), { map_id: floor });
+    const sent = await this.run(dreame("select_map"), { map_id: floor });
+    if (!sent && this.pendingFloor === floor) {
+      this.pendingFloor = null;
+      this.update();
+    }
   }
 
   requestFloorChange(floor, activeFloor, label) {
@@ -1827,9 +1839,16 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
   }
 
-  loadStructuredMap(image, identity) {
+  discoverMapCamera(deviceId) {
+    if (!deviceId) return null;
+    const matches = Object.entries(this.ha.entities).filter(([id, entry]) => id.startsWith("camera.")
+      && entry?.device_id === deviceId && entry.platform === DOMAIN && entry.translation_key === "map");
+    return matches.length === 1 ? matches[0][0] : null;
+  }
+
+  loadStructuredMap(image, identity, camera) {
     const url = this.isConnected && this.config.map_display === "structured" && this.mapPicking
-      && identity.floor != null && identity.frame != null ? mapDataURL(image, this.config.map_camera) : null;
+      && identity.floor != null && identity.frame != null ? mapDataURL(image, camera) : null;
     const key = url ? JSON.stringify([url, identity]) : null;
     if (this.sceneKey === key) {
       this.renderStructuredMap();
@@ -1892,7 +1911,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   update() {
     if (!this.config || !this.ha) return;
     this.updateLanguage();
-    const { entity, map_camera, title } = this.config;
+    const { entity, title } = this.config;
+    const robotDevice = this.ha.entities?.[entity]?.device_id;
+    const map_camera = this.config.map_camera ?? this.discoverMapCamera(robotDevice);
     const vacuum = this.ha.states[entity];
     const attrs = vacuum?.attributes ?? {};
     const camera = this.ha.states[map_camera];
@@ -1901,7 +1922,6 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const can = (action) => hasAction(this.ha, action);
     const activeMapId = attrs.selected_map_id;
     const cameraMapId = map.saved_map_id ?? map.map_id;
-    const robotDevice = this.ha.entities?.[entity]?.device_id;
     const cameraDevice = this.ha.entities?.[map_camera]?.device_id;
     const relatedCamera = !(robotDevice && cameraDevice && robotDevice !== cameraDevice);
     const requestedFloor = String(this.pendingFloor);
@@ -2062,7 +2082,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.cancelRestrictionEdit();
       this.status("The map changed. Select the area again.", true);
     }
-    this.loadStructuredMap(image, { floor: activeMapId ?? cameraMapId, mapId: map.map_id, frame: map.frame_id });
+    this.loadStructuredMap(image, { floor: activeMapId ?? cameraMapId, mapId: map.map_id, frame: map.frame_id }, map_camera);
 
     const ids = deviceEntities(this.ha, this.config);
     const settingActions = ["button.press", "switch.turn_on", "switch.turn_off", "number.set_value",
