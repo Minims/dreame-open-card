@@ -289,6 +289,11 @@
       require(calls.some(c => c.service === "vacuum_rename_segment" && c.payload.segment_id === 1 && c.payload.segment_name === "Kitchen"),
         "Submitting room dialog did not call vacuum_rename_segment with segment_id and name");
       editDetail.open = false;
+      const settingsDetail = el("settings-detail");
+      settingsDetail.open = true;
+      const categories = el("settings").querySelectorAll(".settings-category");
+      require(categories.length > 0, "Device settings are not grouped into categories");
+      settingsDetail.open = false;
       update();
       card.setConfig(config);
       const room = canvas.getContext("2d").getImageData(90, 100, 1, 1).data;

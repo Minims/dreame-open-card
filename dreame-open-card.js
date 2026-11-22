@@ -179,6 +179,15 @@ const FRENCH = {
   "Fitness": "Fitness",
   "Lounge": "Détente",
   "Children's room": "Chambre d’enfant",
+  "Scheduled Cleanup": "Nettoyage programmé",
+  "Audio Settings": "Paramètres audio",
+  "Carpet Settings": "Paramètres des tapis",
+  "Mopping Settings": "Paramètres de la serpillière",
+  "Camera and Obstacle Settings": "Caméra et obstacles",
+  "More Functions": "Fonctions supplémentaires",
+  "Do Not Disturb": "Ne pas déranger",
+  "Battery Management": "Gestion de la batterie",
+  "Device Information": "Informations sur l’appareil",
 };
 
 export function languageFor(hass) {
@@ -565,6 +574,17 @@ const ROOM_TYPES = [
   ["Balcony", "flower-tulip-outline"], ["Utility room", "washing-machine"], ["Pantry", "cupboard-outline"],
   ["Closet", "hanger"], ["Meeting room", "presentation"], ["Office", "desktop-classic"],
   ["Fitness", "dumbbell"], ["Lounge", "gamepad-variant-outline"], ["Children's room", "baby-carriage"],
+];
+
+const SETTINGS_CATEGORIES = [
+  ["Audio Settings", "volume-high", ["volume", "voice_assistant", "streaming_voice_prompt"]],
+  ["Carpet Settings", "rug", ["carpet_boost", "carpet_cleaning", "intensive_carpet_cleaning", "clean_carpets_first", "side_brush_carpet_rotate"]],
+  ["Mopping Settings", "cup-water", ["mop_pad_humidity", "wetness_level", "mop_extend", "mop_extend_frequency", "auto_mount_mop", "smart_mop_washing", "washing_mode", "water_temperature", "drying_time", "auto_drying", "silent_drying"]],
+  ["Camera and Obstacle Settings", "camera-outline", ["obstacle_avoidance", "ai_obstacle_detection", "ai_obstacle_image_upload", "ai_obstacle_picture", "ai_pet_detection", "ai_furniture_detection", "ai_fluid_detection", "fuzzy_obstacle_detection", "pet_picture", "fill_light", "camera_light_brightness", "collision_avoidance", "stain_avoidance", "dynamic_obstacle_cleaning"]],
+  ["Do Not Disturb", "minus-circle-outline", ["dnd", "dnd_disable_resume_cleaning", "dnd_disable_auto_empty", "dnd_reduce_volume"]],
+  ["Battery Management", "battery-charging", ["battery_charge_level", "off_peak_charging"]],
+  ["Device Information", "information-outline", ["firmware_version", "first_cleaning_date", "total_cleaning_time", "cleaning_count", "total_cleaned_area"]],
+  ["More Functions", "dots-horizontal-circle-outline", []],
 ];
 const CLEANING_CONTROLS = [
   ["cleaning_mode", "Cleaning mode", "select", { sweeping: "broom", mopping: "water", sweeping_and_mopping: "hydro-power", mopping_after_sweeping: "broom" }],
@@ -1137,6 +1157,13 @@ const TEMPLATE = `
     border:0; border-radius:10px; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:12px; }
   .setting-btn[aria-pressed="true"] { background:var(--primary-color,#00bcd4); color:white; }
   .setting-slider { width:100%; accent-color:var(--primary-color,#00bcd4); }
+  .settings-category { border-bottom:1px solid var(--divider-color,#eee); padding:8px 0; }
+  .settings-category summary { display:flex; align-items:center; gap:12px; cursor:pointer; font-size:14px; font-weight:500; padding:6px 0; list-style:none; }
+  .settings-category summary::-webkit-details-marker { display:none; }
+  .settings-category .category-title { flex:1; }
+  .settings-category summary ha-icon:last-child { transition:transform 0.2s; }
+  .settings-category[open] summary ha-icon:last-child { transform:rotate(90deg); }
+  .category-body { padding:8px 0 8px 32px; display:grid; gap:8px; }
   #editor-detail input[type=url] { width:100%; }
   .remote-live { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .remote-live input { width:100%; }
@@ -2726,58 +2753,84 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       node.append(element("p", this.t("Add Dreame entities with the entities option.")));
       return;
     }
-    for (const id of ids) {
-      const state = this.ha.states[id];
-      const a = state.attributes ?? {};
-      const [domain] = id.split(".");
-      const name = caption(state, id);
-      const available = online(state);
-      let control;
-      let action;
-      let payload;
-      if (domain === "button") {
-        action = "button.press";
-        node.append(this.button(name, () => this.run(action, {}, id), !pressable(state) || !hasAction(this.ha, action)));
-        continue;
+    const categorized = new Map();
+    const assigned = new Set();
+    for (const [title, iconName, keys] of SETTINGS_CATEGORIES) {
+      const matched = ids.filter((id) => !assigned.has(id) && keys.some((k) => id.endsWith(`_${k}`) || id === k));
+      for (const id of matched) assigned.add(id);
+      if (matched.length) categorized.set(title, { iconName, ids: matched });
+    }
+    const remaining = ids.filter((id) => !assigned.has(id));
+    if (remaining.length) {
+      const existing = categorized.get("More Functions");
+      if (existing) existing.ids.push(...remaining);
+      else categorized.set("More Functions", { iconName: "dots-horizontal-circle-outline", ids: remaining });
+    }
+
+    for (const [title, { iconName, ids: groupIds }] of categorized) {
+      const group = element("details", null, { class: "settings-category" });
+      const summary = element("summary");
+      summary.append(icon(iconName), element("span", this.t(title), { class: "category-title" }), icon("chevron-right"));
+      const body = element("div", null, { class: "category-body" });
+      for (const id of groupIds) {
+        this.renderSettingControl(body, id);
       }
-      if (domain === "switch") {
-        action = state.state === "on" ? "switch.turn_off" : "switch.turn_on";
-        control = element("input", null, { type: "checkbox" });
-        control.checked = state.state === "on";
-        payload = () => ({});
-      } else if (domain === "select" && Array.isArray(a.options)) {
-        action = "select.select_option";
-        control = element("select");
-        control.append(...a.options.map((option) => element("option", option, { value: option })));
-        control.value = state.state;
-        payload = () => ({ option: control.value });
-      } else if (domain === "number" || domain === "time") {
-        const attrs = domain === "time" ? { type: "time", step: "1" } : { type: "number" };
-        if (domain === "number") {
-          for (const key of ["min", "max", "step"]) if (Number.isFinite(a[key])) attrs[key] = a[key];
+      group.append(summary, body);
+      node.append(group);
+    }
+  }
+
+  renderSettingControl(container, id) {
+    const state = this.ha.states[id];
+    const a = state.attributes ?? {};
+    const [domain] = id.split(".");
+    const name = caption(state, id);
+    const available = online(state);
+    let control;
+    let action;
+    let payload;
+    if (domain === "button") {
+      action = "button.press";
+      container.append(this.button(name, () => this.run(action, {}, id), !pressable(state) || !hasAction(this.ha, action)));
+      return;
+    }
+    if (domain === "switch") {
+      action = state.state === "on" ? "switch.turn_off" : "switch.turn_on";
+      control = element("input", null, { type: "checkbox" });
+      control.checked = state.state === "on";
+      payload = () => ({});
+    } else if (domain === "select" && Array.isArray(a.options)) {
+      action = "select.select_option";
+      control = element("select");
+      control.append(...a.options.map((option) => element("option", option, { value: option })));
+      control.value = state.state;
+      payload = () => ({ option: control.value });
+    } else if (domain === "number" || domain === "time") {
+      const attrs = domain === "time" ? { type: "time", step: "1" } : { type: "number" };
+      if (domain === "number") {
+        for (const key of ["min", "max", "step"]) if (Number.isFinite(a[key])) attrs[key] = a[key];
+      }
+      control = element("input", null, attrs);
+      control.value = state.state;
+      action = domain + ".set_value";
+      payload = () => domain === "number" ? { value: control.valueAsNumber }
+        : { time: control.value.length === 5 ? control.value + ":00" : control.value };
+    }
+    if (control) {
+      control.disabled = !available || !hasAction(this.ha, action);
+      control.addEventListener("change", async () => {
+        if (!control.checkValidity() || (domain !== "switch" && !control.value)) {
+          this.status("Invalid value.", true);
+          return;
         }
-        control = element("input", null, attrs);
-        control.value = state.state;
-        action = domain + ".set_value";
-        payload = () => domain === "number" ? { value: control.valueAsNumber }
-          : { time: control.value.length === 5 ? control.value + ":00" : control.value };
-      }
-      if (control) {
-        control.disabled = !available || !hasAction(this.ha, action);
-        control.addEventListener("change", async () => {
-          if (!control.checkValidity() || (domain !== "switch" && !control.value)) {
-            this.status("Invalid value.", true);
-            return;
-          }
-          if (!await this.run(action, payload(), id)) {
-            if (domain === "switch") control.checked = this.ha.states[id]?.state === "on";
-            else control.value = this.ha.states[id]?.state ?? "";
-          }
-        });
-        node.append(this.label(name, control));
-      } else {
-        node.append(element("p", name + " · " + state.state + (a.unit_of_measurement ? " " + a.unit_of_measurement : "")));
-      }
+        if (!await this.run(action, payload(), id)) {
+          if (domain === "switch") control.checked = this.ha.states[id]?.state === "on";
+          else control.value = this.ha.states[id]?.state ?? "";
+        }
+      });
+      container.append(this.label(name, control));
+    } else {
+      container.append(element("p", name + " · " + state.state + (a.unit_of_measurement ? " " + a.unit_of_measurement : "")));
     }
   }
 
