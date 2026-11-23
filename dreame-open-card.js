@@ -1043,7 +1043,7 @@ const TEMPLATE = `
   .body.scheme-dreame-dark { --accent:#0099bf; --secondary-text-color:#bdbdbd; color:#eee; background:#1b1b1b; }
   .body.scheme-dreame-light { --accent:#0099bf; }
   .body.scheme-grayscale { --accent:#555; filter:grayscale(.85); }
-  .body { position:relative; padding:16px 8px 20px; display:grid; gap:16px; }
+  .body { position:relative; padding:16px 8px 20px; display:grid; gap:16px; container-type:inline-size; }
   h2,h3,p { margin:0; }
   h2 { font-size:20px; font-weight:500; }
   h3 { font-size:1.025rem; }
@@ -1064,15 +1064,22 @@ const TEMPLATE = `
   .legacy-switches input[type=checkbox]:checked::before { transform:translateX(16px); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
-  .panel-mode.has-side-panel .stage { grid-template-columns:40px minmax(0,1fr) minmax(280px,380px) 40px; align-items:start; }
-  #side-panel { grid-column:3; display:flex; flex-direction:column; max-height:58vh; overflow-y:auto; padding:10px 14px;
+  .has-side-panel #quick, .has-side-panel #modes, .has-side-panel #basic, .has-side-panel #menu { display:none !important; }
+  .has-side-panel figure { display:none; }
+  .has-side-panel .stage { display:block; }
+  #side-panel { display:flex; flex-direction:column; max-height:70vh; overflow-y:auto; padding:10px 14px;
     background:var(--card-background-color,#fff); border-radius:12px; box-shadow:0 1px 4px #0002; z-index:2; box-sizing:border-box; }
   .side-panel-header { display:flex; align-items:center; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--divider-color,#eee); padding-bottom:6px; }
   .side-panel-header h3 { margin:0; font-size:16px; font-weight:600; flex:1; }
   #side-panel-back { border:0; background:transparent; cursor:pointer; color:inherit; padding:4px; border-radius:50%; }
-  .left-handed.has-side-panel .stage { grid-template-columns:40px minmax(280px,380px) minmax(0,1fr) 40px; }
-  .left-handed #side-panel { grid-column:2; }
-  .left-handed.has-side-panel figure { grid-column:3; }
+  @container (min-width: 720px) {
+    .panel-mode.has-side-panel .stage { display:grid; grid-template-columns:40px minmax(0,1fr) minmax(300px,400px) 40px; align-items:start; }
+    .panel-mode.has-side-panel figure { display:grid; grid-column:2; }
+    .panel-mode.has-side-panel #side-panel { grid-column:3; width:auto; max-height:58vh; }
+    .left-handed.has-side-panel .stage { grid-template-columns:40px minmax(300px,400px) minmax(0,1fr) 40px; }
+    .left-handed #side-panel { grid-column:2; }
+    .left-handed.has-side-panel figure { grid-column:3; }
+  }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
   #map-frame { display:contents; }
@@ -1967,12 +1974,23 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       ["maintenance-detail", "Accessory usage", "wrench-outline"],
       ["remote-detail", "Step-by-step remote control", "gamepad-variant-outline"], ["settings-detail", "Settings, dock and maintenance", "tune"]]
       .filter(([id]) => !this.part(id).hidden);
-    const quick = panels.filter(([id]) => !["maintenance-detail", "schedule-detail"].includes(id));
-    this.section("quick", quick, (node) => node.replaceChildren(...quick.map(([id, label, name]) =>
-      this.iconButton(label, name, () => this.openView(id), { iconOnly: true }))));
+    const floors = this.part("floors").childElementCount > 0;
+    const hasShortcuts = !this.part("shortcut-detail").hidden;
+    const quick = [
+      hasShortcuts ? panels.find(([id]) => id === "shortcut-detail") : null,
+      panels.find(([id]) => id === "cleaning-detail"),
+      floors ? ["floors", "Switch floor", "layers"] : null,
+      panels.find(([id]) => id === "settings-detail"),
+    ].filter(Boolean);
+    this.section("quick", quick, (node) => node.replaceChildren(...quick.map(([id, label, name]) => {
+      if (id === "floors") return this.iconButton(label, name, () => {
+        this.part("floors").hidden = false;
+        this.part("floors").querySelector("select")?.focus();
+      }, { iconOnly: true });
+      return this.iconButton(label, name, () => this.openView(id), { iconOnly: true });
+    })));
     const locate = basic.find(([action]) => action === "vacuum.locate");
     const refresh = basic.find(([action]) => action === dreame("request_map"));
-    const floors = this.part("floors").childElementCount > 0;
     this.section("menu-items", [panels, locate, refresh, floors, available], (node) => {
       node.replaceChildren(...panels.map(([id, label, name]) => this.iconButton(label, name, () => this.openView(id))));
       for (const entry of [locate, refresh].filter(Boolean)) {
