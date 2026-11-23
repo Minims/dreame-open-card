@@ -266,7 +266,13 @@
       require(cleaningBtn, "Cleaning settings is missing from the menu");
       cleaningBtn.click();
       const cleaningDetail = el("cleaning-detail");
-      require(cleaningDetail.open, "Cleaning settings panel did not open");
+      const sidePanel = el("side-panel");
+      if (params.has("panel")) {
+        require(!sidePanel.hidden && el("side-panel-title").textContent === "Cleaning settings",
+          "In panel mode, opening cleaning settings did not display the side panel");
+      } else {
+        require(cleaningDetail.open, "Cleaning settings panel did not open");
+      }
       const suctionButtons = el("cleaning-settings").querySelectorAll('[aria-label="Suction level"] button');
       require(suctionButtons.length === 4, "Suction level did not render 4 options");
       const activeSuction = el("cleaning-settings").querySelector('[aria-label="Suction level"] button[aria-pressed="true"]');
@@ -274,6 +280,11 @@
       suctionButtons[3].click();
       require(calls.some(c => c.domain === "select" && c.service === "select_option" && c.payload.option === "turbo"),
         "Clicking turbo did not call select_option with turbo");
+      if (params.has("panel")) {
+        el("side-panel-back").click();
+        require(sidePanel.hidden && !card.shadowRoot.querySelector(".body").classList.contains("has-side-panel"),
+          "Clicking side panel back button did not close the side panel");
+      }
       cleaningDetail.open = false;
       const editDetail = el("edit-detail");
       editDetail.open = true;

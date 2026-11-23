@@ -162,6 +162,7 @@ const FRENCH = {
   "Confirm this action on the robot": "Confirmer l’action sur le robot",
   "Apply": "Appliquer",
   "Confirm the action": "Confirmez l’action",
+  "Cleaning settings": "Paramètres de nettoyage",
   "Room name": "Nom de la pièce",
   "Rename room": "Renommer la pièce",
   "Living room": "Salon",
@@ -1056,6 +1057,15 @@ const TEMPLATE = `
   #telemetry small { font-size:11px; color:var(--secondary-text-color,#505050); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
+  .panel-mode.has-side-panel .stage { grid-template-columns:40px minmax(0,1fr) minmax(280px,380px) 40px; align-items:start; }
+  #side-panel { grid-column:3; display:flex; flex-direction:column; max-height:58vh; overflow-y:auto; padding:10px 14px;
+    background:var(--card-background-color,#fff); border-radius:12px; box-shadow:0 1px 4px #0002; z-index:2; box-sizing:border-box; }
+  .side-panel-header { display:flex; align-items:center; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--divider-color,#eee); padding-bottom:6px; }
+  .side-panel-header h3 { margin:0; font-size:16px; font-weight:600; flex:1; }
+  #side-panel-back { border:0; background:transparent; cursor:pointer; color:inherit; padding:4px; border-radius:50%; }
+  .left-handed.has-side-panel .stage { grid-template-columns:40px minmax(280px,380px) minmax(0,1fr) 40px; }
+  .left-handed #side-panel { grid-column:2; }
+  .left-handed.has-side-panel figure { grid-column:3; }
   figure { grid-column:2; display:grid; grid-template-columns:minmax(0,1fr); place-items:center; margin:0; overflow:hidden; }
   #map-layer { position:relative; max-width:100%; width:max-content; line-height:0; }
   #map-frame { display:contents; }
@@ -1249,6 +1259,13 @@ const TEMPLATE = `
       <img id="map-foreground" class="map-art" alt="" hidden>
       <div id="map-objects" hidden></div><div id="room-markers" hidden></div><div id="object-markers" hidden></div><div id="zone-overlay" hidden></div>
     </div></div></figure>
+    <aside id="side-panel" hidden>
+      <header class="side-panel-header">
+        <button id="side-panel-back" type="button" aria-label="Back"><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+        <h3 id="side-panel-title"></h3>
+      </header>
+      <div id="side-panel-body"></div>
+    </aside>
     <div id="quick"></div>
   </div>
   <div id="modes" role="group" aria-label="Cleaning mode"></div>
@@ -1338,6 +1355,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       obstaclePhoto.hidden = true;
       this.part("obstacle-no-photo").hidden = false;
     });
+    this.part("side-panel-back").addEventListener("click", () => this.closeSidePanel());
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -1911,10 +1929,38 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   openView(id) {
     this.part("menu").open = false;
-    this.part("views").hidden = false;
     const panel = this.part(id);
+    const body = this.shadowRoot.querySelector(".body");
+    const isPanel = body.classList.contains("panel-mode");
+    if (isPanel) {
+      this.closeSidePanel();
+      const sidePanel = this.part("side-panel");
+      const title = panel.querySelector("summary")?.textContent ?? "";
+      this.part("side-panel-title").textContent = title;
+      const content = this.part("side-panel-body");
+      const children = [...panel.children].filter((c) => c.tagName !== "SUMMARY");
+      this.sidePanelSource = { panel, children };
+      content.replaceChildren(...children);
+      sidePanel.hidden = false;
+      body.classList.add("has-side-panel");
+      this.part("side-panel-back").focus();
+      return;
+    }
+    this.part("views").hidden = false;
     panel.open = true;
-    panel.querySelector("summary").focus();
+    panel.querySelector("summary")?.focus();
+  }
+
+  closeSidePanel() {
+    const sidePanel = this.part("side-panel");
+    sidePanel.hidden = true;
+    const body = this.shadowRoot.querySelector(".body");
+    body.classList.remove("has-side-panel");
+    if (this.sidePanelSource) {
+      const { panel, children } = this.sidePanelSource;
+      panel.append(...children);
+      this.sidePanelSource = null;
+    }
   }
 
   status(message, error = false) {
