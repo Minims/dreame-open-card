@@ -262,6 +262,12 @@
       update(42, 7, { map_index: 1 });
       card.setConfig({ ...config, map_config: { map_1: { object_scale: 2, font_size: 8 } } });
       button("modes", "Rooms").click();
+      card.setConfig({ ...config, icon_set: "mijia", legacy_switches: true, hidden_card_objects: ["animations"] });
+      const bodyEl = card.shadowRoot.querySelector(".body");
+      require(bodyEl.classList.contains("icon-set-mijia"), "icon_set did not apply icon-set class to body");
+      require(bodyEl.classList.contains("legacy-switches"), "legacy_switches did not apply legacy-switches class to body");
+      require(bodyEl.classList.contains("no-animations"), "animations in hidden_card_objects did not apply no-animations class");
+      card.setConfig({ ...config, map_config: { map_1: { object_scale: 2, font_size: 8 } } });
       const scaledRoom = el("room-markers").querySelector('[data-room="1"]');
       require(getComputedStyle(scaledRoom).scale === "2" && getComputedStyle(scaledRoom).fontSize === "8px",
         "object_scale and font_size did not apply to room markers");

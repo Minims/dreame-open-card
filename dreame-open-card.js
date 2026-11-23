@@ -1055,6 +1055,13 @@ const TEMPLATE = `
   #telemetry:empty, #rail:not(:has(> :not([hidden]))), #quick:empty, #modes:empty { display:none; }
   #telemetry span { display:inline-flex; align-items:center; gap:5px; font-size:20px; }
   #telemetry small { font-size:11px; color:var(--secondary-text-color,#505050); }
+  .no-animations, .no-animations * { transition:none !important; animation:none !important; }
+  .legacy-switches input[type=checkbox] { appearance:none; width:36px; height:20px; border-radius:10px;
+    background:var(--divider-color,#bbb); position:relative; cursor:pointer; outline:none; transition:background .2s; }
+  .legacy-switches input[type=checkbox]:checked { background:var(--primary-color,#00bcd4); }
+  .legacy-switches input[type=checkbox]::before { content:""; position:absolute; width:16px; height:16px; border-radius:50%;
+    background:#fff; top:2px; left:2px; transition:transform .2s; box-shadow:0 1px 3px #0004; }
+  .legacy-switches input[type=checkbox]:checked::before { transform:translateX(16px); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   .panel-mode.has-side-panel .stage { grid-template-columns:40px minmax(0,1fr) minmax(280px,380px) 40px; align-items:start; }
@@ -1423,6 +1430,10 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const body = this.shadowRoot.querySelector(".body");
     body.classList.toggle("left-handed", config.left_handed === true);
     body.classList.toggle("full-height", config.full_height === true);
+    body.classList.toggle("legacy-switches", config.legacy_switches === true);
+    body.classList.toggle("no-animations", Boolean(config.hidden_card_objects?.includes("animations")));
+    body.classList.remove("icon-set-dreame", "icon-set-dreame_old", "icon-set-mijia", "icon-set-material");
+    body.classList.add(`icon-set-${config.icon_set ?? "dreame"}`);
     const figure = this.part("figure");
     figure.classList.toggle("ratio-frame", Boolean(config.aspect_ratio != null));
     figure.style.setProperty("--map-aspect-ratio", String(config.aspect_ratio ?? ""));
