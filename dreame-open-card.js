@@ -1,4 +1,4 @@
-export const CARD_VERSION = "2026.11.0a";
+export const CARD_VERSION = "2026.11.0b";
 
 const DOMAIN = "dreame_vacuum";
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
