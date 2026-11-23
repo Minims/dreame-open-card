@@ -312,6 +312,12 @@
       require(calls.some(c => c.service === "vacuum_rename_segment" && c.payload.segment_id === 1 && c.payload.segment_name === "Kitchen"),
         "Submitting room dialog did not call vacuum_rename_segment with segment_id and name");
       editDetail.open = false;
+      const layerEl = el("map-layer");
+      layerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, cancelable: true, bubbles: true }));
+      require(card.mapZoom > 1, "Wheel event on map layer did not zoom in");
+      layerEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      require(card.mapZoom === 1 && card.mapPan.x === 0 && card.mapPan.y === 0,
+        "Double-clicking map did not reset zoom and pan");
       const settingsDetail = el("settings-detail");
       settingsDetail.open = true;
       const categories = el("settings").querySelectorAll(".settings-category");

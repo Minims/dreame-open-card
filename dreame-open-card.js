@@ -1368,6 +1368,44 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.part("obstacle-no-photo").hidden = false;
     });
     this.part("side-panel-back").addEventListener("click", () => this.closeSidePanel());
+    this.mapZoom = 1;
+    this.mapPan = { x: 0, y: 0 };
+    const layer = this.part("map-layer");
+    layer.addEventListener("wheel", (event) => {
+      const locked = this.config?.locked ?? "auto";
+      if (locked === "always") return;
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.25 : 0.8;
+      this.mapZoom = Math.min(5, Math.max(1, this.mapZoom * factor));
+      if (this.mapZoom <= 1.05) {
+        this.mapZoom = 1;
+        this.mapPan = { x: 0, y: 0 };
+      }
+      this.applyTransform();
+    }, { passive: false });
+    layer.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      this.mapZoom = 1;
+      this.mapPan = { x: 0, y: 0 };
+      this.applyTransform();
+    });
+    let dragStart = null;
+    layer.addEventListener("pointerdown", (event) => {
+      if (this.mapZoom > 1 && event.isPrimary && event.button === 0) {
+        dragStart = { x: event.clientX, y: event.clientY, panX: this.mapPan.x, panY: this.mapPan.y };
+        layer.setPointerCapture?.(event.pointerId);
+      }
+    });
+    layer.addEventListener("pointermove", (event) => {
+      if (dragStart) {
+        this.mapPan.x = dragStart.panX + (event.clientX - dragStart.x);
+        this.mapPan.y = dragStart.panY + (event.clientY - dragStart.y);
+        this.applyTransform();
+      }
+    });
+    const stopDrag = () => { dragStart = null; };
+    layer.addEventListener("pointerup", stopDrag);
+    layer.addEventListener("pointercancel", stopDrag);
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -2186,6 +2224,15 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
   }
 
+  applyTransform() {
+    const layer = this.part("map-layer");
+    const parts = [];
+    if (this.mapRotation) parts.push(`rotate(${this.mapRotation}deg)`);
+    if (this.mapZoom !== 1) parts.push(`scale(${this.mapZoom})`);
+    if (this.mapPan?.x || this.mapPan?.y) parts.push(`translate(${this.mapPan.x / this.mapZoom}px, ${this.mapPan.y / this.mapZoom}px)`);
+    layer.style.transform = parts.join(" ");
+  }
+
   renderStructuredMap() {
     const canvas = this.part("structured-map");
     const img = this.part("map");
@@ -2193,7 +2240,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const figure = this.part("figure");
     if (img.naturalHeight) figure.style.setProperty("--map-image-ratio", String(img.naturalWidth / img.naturalHeight));
     figure.classList.toggle("quarter-turn", this.mapRotation % 180 === 90);
-    layer.style.transform = this.mapRotation ? `rotate(${this.mapRotation}deg)` : "";
+    this.applyTransform();
     layer.style.setProperty("--map-counter-rotation", `${-(this.mapRotation ?? 0)}deg`);
     const presentation = mapPresentation(this.config, this.mapIndex);
     const hidden = new Set(presentation.hidden_objects ?? []);
