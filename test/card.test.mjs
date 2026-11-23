@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mapPoint, mapArea, localImage, deviceEntities, callAction, parseFields, availableActions, capabilityEntities, buildCleaningTask, mapEditPayload } from "../dreame-open-card.js";
+import { mapPoint, mapArea, localImage, deviceEntities, callAction, parseFields, availableActions, capabilityEntities, buildCleaningTask, mapEditPayload, DreameOpenCard } from "../dreame-open-card.js";
 
 const calibration = [
   { map: { x: 20, y: 30 }, vacuum: { x: 0, y: 0 } },
@@ -342,6 +342,8 @@ test("validates additive panel and map configuration", async () => {
   assert.equal(validateCardConfig({ aspect_ratio: 1.5, full_height: true }), true);
   assert.throws(() => validateCardConfig({ aspect_ratio: 0.05 }), /aspect_ratio/);
   assert.throws(() => validateCardConfig({ aspect_ratio: "1.5" }), /aspect_ratio/);
+  const editor = await DreameOpenCard.getConfigElement();
+  assert.equal(editor.tagName, "DREAME-OPEN-CARD-EDITOR");
   assert.throws(() => validateCardConfig({ full_height: "true" }), /full_height/);
 });
 

@@ -1340,7 +1340,7 @@ function element(tag, text, attrs = {}) {
 const icon = (name) => element("ha-icon", null, { icon: `mdi:${name}`, "aria-hidden": "true" });
 const caption = (state, id) => state?.attributes?.friendly_name || id;
 
-class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
+export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   constructor() {
     super();
     this.attachShadow({ mode: "open" }).innerHTML = TEMPLATE;
@@ -2963,6 +2963,108 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     fill();
     node.append(select, form);
   }
+
+  static async getConfigElement() {
+    return globalThis.document ? document.createElement("dreame-open-card-editor") : { tagName: "DREAME-OPEN-CARD-EDITOR" };
+  }
+
+  static getStubConfig(hass, entities) {
+    const vacuum = entities?.find((e) => e.startsWith("vacuum."));
+    return { entity: vacuum ?? "vacuum.robot" };
+  }
+}
+
+export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
+  constructor() {
+    super();
+    if (this.attachShadow) {
+      this.attachShadow({ mode: "open" }).innerHTML = `
+        <style>
+          .form { display:grid; gap:12px; font-family:var(--paper-font-body1_-_font-family,system-ui,sans-serif); }
+          .row { display:grid; gap:4px; }
+          label { font-size:12px; font-weight:500; color:var(--secondary-text-color,#666); }
+          input, select { padding:8px 10px; border-radius:8px; border:1px solid var(--divider-color,#ccc);
+            background:var(--card-background-color,#fff); color:inherit; font:inherit; }
+          .toggle-row { display:flex; align-items:center; justify-content:space-between; }
+        </style>
+        <div class="form">
+          <div class="row"><label>Entity</label><input name="entity" placeholder="vacuum.robot" required></div>
+          <div class="row"><label>Title</label><input name="title" placeholder="Optional custom title"></div>
+          <div class="row"><label>Mode</label>
+            <select name="mode"><option value="default">Default</option><option value="panel">Panel</option></select>
+          </div>
+          <div class="row"><label>Map Display</label>
+            <select name="map_display">
+              <option value="floor_plan">Floor Plan (Walls & Materials)</option>
+              <option value="floor_plan_without_texture">Floor Plan (Flat colors, no texture)</option>
+              <option value="floor_plan_only">Floor Plan (Walls only)</option>
+              <option value="structured">Structured</option>
+              <option value="standard">Standard (Camera)</option>
+            </select>
+          </div>
+          <div class="row"><label>Color Scheme</label>
+            <select name="color_scheme">
+              <option value="dreame_auto">Dreame Auto</option>
+              <option value="dreame_light">Dreame Light</option>
+              <option value="dreame_dark">Dreame Dark</option>
+              <option value="mijia_auto">Mijia Auto</option>
+              <option value="mijia_light">Mijia Light</option>
+              <option value="mijia_dark">Mijia Dark</option>
+              <option value="grayscale">Grayscale</option>
+            </select>
+          </div>
+          <div class="row"><label>Icon Set</label>
+            <select name="icon_set">
+              <option value="dreame">Dreame</option>
+              <option value="dreame_old">Dreame Old</option>
+              <option value="mijia">Mijia</option>
+              <option value="material">Material</option>
+            </select>
+          </div>
+          <div class="row"><label>Lock Mode</label>
+            <select name="locked">
+              <option value="auto">Auto</option>
+              <option value="only_touch">Only Touch</option>
+              <option value="never">Never</option>
+              <option value="always">Always</option>
+            </select>
+          </div>
+          <div class="row"><label>Aspect Ratio</label><input name="aspect_ratio" type="number" step="0.1" placeholder="e.g. 1.5"></div>
+          <div class="toggle-row"><label>Full Height</label><input name="full_height" type="checkbox"></div>
+          <div class="toggle-row"><label>Left Handed</label><input name="left_handed" type="checkbox"></div>
+          <div class="toggle-row"><label>Legacy Switches</label><input name="legacy_switches" type="checkbox"></div>
+        </div>
+      `;
+      this.shadowRoot.addEventListener("change", (e) => this.onChange(e));
+    }
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    if (!this.shadowRoot) return;
+    for (const [key, val] of Object.entries(config)) {
+      const field = this.shadowRoot.querySelector(`[name="${key}"]`);
+      if (!field) continue;
+      if (field.type === "checkbox") field.checked = Boolean(val);
+      else field.value = val ?? "";
+    }
+  }
+
+  onChange(event) {
+    const field = event.target;
+    const name = field.name;
+    if (!name) return;
+    const value = field.type === "checkbox" ? field.checked
+      : field.type === "number" ? (field.value === "" ? undefined : field.valueAsNumber)
+      : field.value || undefined;
+    if (value === undefined) delete this._config[name];
+    else this._config[name] = value;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+  }
+}
+
+if (globalThis.customElements && !customElements.get("dreame-open-card-editor")) {
+  customElements.define("dreame-open-card-editor", DreameOpenCardEditor);
 }
 
 if (globalThis.customElements && !customElements.get("dreame-open-card")) {
