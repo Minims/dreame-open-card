@@ -1,4 +1,4 @@
-export const CARD_VERSION = "2026.11.0b";
+export const CARD_VERSION = "2026.11.0c";
 
 const DOMAIN = "dreame_vacuum";
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
@@ -1038,7 +1038,7 @@ const CONTROL_ICONS = {
 const TEMPLATE = `
 <style>
   :host { display:block; color:var(--primary-text-color,#151515); }
-  ha-card { --accent:#0099bf; --control-bg:var(--dvc-control-bg,#e0e0e0);
+  ha-card { --accent:#0099bf; --control-bg:var(--dreame-control-bg,#e0e0e0);
     background:var(--ha-card-background,var(--card-background-color,#fff)); }
   .body.scheme-dreame-dark { --accent:#0099bf; --secondary-text-color:#bdbdbd; color:#eee; background:#1b1b1b; }
   .body.scheme-dreame-light { --accent:#0099bf; }

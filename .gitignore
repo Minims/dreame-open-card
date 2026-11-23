@@ -1,0 +1,6 @@
+node_modules/
+.superpowers/
+docs/superpowers/
+docs/reverse-engineering.md
+*.log
+.DS_Store
