@@ -45,10 +45,13 @@
           entity_picture: `/api/camera_proxy/${camera}?v=${frame}`, calibration_points: calibration,
           cruising_history_picture: { "Cruise fixture": `/api/camera_history_map_proxy/${camera}?v=1234` },
           virtual_walls: [[450, 250, 450, 650]], no_go_areas: [[200, 300, 300, 400]], no_mopping_areas: [],
-          rooms: { 1: { name: "Living room", icon: "mdi:sofa-outline", x0: 150, x1: 400, y0: 250, y1: 650 },
-            2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650 } }, ...restrictions } },
+          rooms: { 1: { name: "Living room", icon: "mdi:sofa-outline", x0: 150, x1: 400, y0: 250, y1: 650,
+            cleaning_times: 1, suction_level: 2, water_volume: 1, cleaning_mode: 2 },
+            2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650,
+            cleaning_times: 2, suction_level: 3, water_volume: 2, cleaning_mode: 1 } }, ...restrictions } },
         "script.sweep": { state: "off", attributes: { friendly_name: "Sweep helper" } },
         "script.quiet": { state: "off", attributes: { friendly_name: "Quiet helper" } },
+        "switch.fixture_customized_cleaning": { state: "on", attributes: { friendly_name: "Customized cleaning" } },
         "select.fixture_cleaning_mode": { state: "sweeping_and_mopping",
           attributes: { friendly_name: "Fixture Cleaning mode", options: ["sweeping", "mopping", "sweeping_and_mopping"] } },
         "select.fixture_suction_level": { state: "standard",
@@ -57,6 +60,7 @@
       services: {
         vacuum: { start: {}, return_to_base: {} },
         script: { turn_on: {} },
+        switch: { turn_on: {}, turn_off: {} },
         select: { select_option: {} },
         dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
           "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map", "rename_segment"].map(name => [`vacuum_${name}`, {}])),
@@ -261,6 +265,8 @@
       const scaledRoom = el("room-markers").querySelector('[data-room="1"]');
       require(getComputedStyle(scaledRoom).scale === "2" && getComputedStyle(scaledRoom).fontSize === "8px",
         "object_scale and font_size did not apply to room markers");
+      require(scaledRoom.querySelector(".room-custom-badge"), "Customized cleaning badge is missing on room marker");
+      require(scaledRoom.querySelector(".room-custom-badge").textContent.includes("x1"), "Customized cleaning repeat count is missing");
       button("menu", "Menu")?.click();
       const cleaningBtn = button("menu-items", "Cleaning settings");
       require(cleaningBtn, "Cleaning settings is missing from the menu");

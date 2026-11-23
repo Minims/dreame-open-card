@@ -1203,6 +1203,11 @@ const TEMPLATE = `
     border:2px solid white; border-radius:999px; background:var(--room-color);
     font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
   #map-layer.hide-room-name .room-label, #map-layer.hide-room-order .room-order { display:none; }
+  #map-layer.hide-customized-cleaning .room-custom-badge { display:none; }
+  .room-custom-badge { position:absolute; bottom:calc(100% + 4px); display:flex; align-items:center; gap:3px;
+    padding:2px 6px; border-radius:12px; background:#ffffffdd; color:#1a2332; font-size:10px; font-weight:700;
+    box-shadow:0 1px 3px #0003; pointer-events:none; }
+  .room-custom-badge ha-icon { --mdc-icon-size:12px; width:12px; height:12px; }
   #map-layer.hide-room-order #room-markers button[data-order]::before { content:none; }
   #map-layer.hide-room-background #room-markers button { background:transparent; border-color:transparent; }
   #map-layer.hide-room-background #room-markers button[data-order]::after { content:none; }
@@ -1575,9 +1580,9 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       // shortcut: anchor badges to the bounds center until segment label coordinates are available.
       const position = roomMarkerPosition(this.calibration, room, img.naturalWidth, img.naturalHeight);
       const symbol = typeof room.icon === "string" && /^mdi:[a-z0-9-]+$/.test(room.icon) ? room.icon.slice(4) : "floor-plan";
-      return position ? [[id, label, symbol, ...position]] : [];
+      return position ? [[id, label, symbol, room, ...position]] : [];
     });
-    this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, symbol, x, y]) => {
+    this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, symbol, room, x, y]) => {
       const button = this.button(null, () => {
         if (this.part("edit-detail").open) return this.openRoomDialog(id, label);
         this.toggleRoom(id, !this.roomSelection.has(id));
@@ -1588,6 +1593,12 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       button.append(element("span", "✓", { class: "room-check", "aria-hidden": "true" }),
         roomIcon, element("span", label, { class: "room-label" }),
         element("span", null, { class: "room-order", "aria-hidden": "true" }));
+      if (room.cleaning_times != null || room.suction_level != null || room.water_volume != null) {
+        const customBadge = element("span", null, { class: "room-custom-badge", "aria-hidden": "true" });
+        customBadge.append(icon("water-outline"), icon("fan"), icon("repeat"),
+          element("span", `x${room.cleaning_times ?? 1}`));
+        button.append(customBadge);
+      }
       button.dataset.room = id;
       button.style.left = `${x * 100}%`;
       button.style.top = `${y * 100}%`;
@@ -2176,7 +2187,7 @@ class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const presentation = mapPresentation(this.config, this.mapIndex);
     const hidden = new Set(presentation.hidden_objects ?? []);
     for (const [flag, className] of [["name", "hide-room-name"], ["name_background", "hide-room-background"],
-      ["order", "hide-room-order"], ["obstacle_background", "simple-obstacle"]]) {
+      ["order", "hide-room-order"], ["obstacle_background", "simple-obstacle"], ["customized_cleaning", "hide-customized-cleaning"]]) {
       layer.classList.toggle(className, hidden.has(flag));
     }
     const { dark, ...overrides } = this.config.override_colors ?? {};
