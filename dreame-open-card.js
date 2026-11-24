@@ -1106,6 +1106,7 @@ const TEMPLATE = `
   #map-layer.room-picking #map { cursor:crosshair; }
   img { display:block; max-width:100%; max-height:68vh; height:auto; object-fit:contain; }
   .panel-mode img { max-width:min(100%,804px); max-height:58vh; }
+  .panel-mode #rooms { display:none !important; }
   #quick { grid-column:3; display:grid; align-content:end; gap:8px; }
   .left-handed #quick { grid-column:1; grid-row:1; }
   #menu { position:absolute; top:11px; right:11px; z-index:2; border:0; padding:0; }

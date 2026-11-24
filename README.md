@@ -107,7 +107,7 @@ Feature availability depends on the vacuum model, integration version and enable
 
 Run `npm test` with Node.js. The card ships as one JavaScript module and has no build dependencies.
 
-To exercise the card in a browser without Home Assistant, run `node scripts/preview-map.mjs`. Open `http://127.0.0.1:4173/?check` for the compact light self-check or `http://127.0.0.1:4173/?check&panel&dark` for wide dark. Omit `check` to leave the fixture on the initial screen for screenshots. The fixture has no real service calls and is not a pixel-parity test against DVC.
+To exercise the card in a browser without Home Assistant, run `node scripts/preview-map.mjs`. Open `http://127.0.0.1:4173/?check` for the compact light self-check or `http://127.0.0.1:4173/?check&panel&dark` for wide dark. Omit `check` to leave the fixture on the initial screen for screenshots. The fixture has no real service calls.
 
 The repository layout follows the [Lovelace boilerplate recommended by HACS](https://github.com/custom-cards/boilerplate-card). CI runs the Node tests and HACS plugin validation. Publishing a GitHub release attaches the JavaScript file from its tag. The tag must match `CARD_VERSION` in the module.
 
