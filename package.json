@@ -1,6 +1,6 @@
 {
   "name": "dreame-open-card",
-  "version": "2026.11.0c",
+  "version": "2026.11.0d",
   "private": true,
   "type": "module",
   "scripts": { "test": "node --test" }

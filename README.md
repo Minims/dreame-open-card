@@ -8,10 +8,12 @@ An independent, free Lovelace card for Dreame vacuums. It uses Home Assistant en
 
 1. In HACS, open the menu and choose **Custom repositories**.
 2. Add `https://github.com/Minims/dreame-open-card` as a **Dashboard**.
-3. Open **Dreame Open Card** and choose **Download**. Select version `2026.11.0c`.
+3. Open **Dreame Open Card** and choose **Download**. HACS lists published releases only.
 4. Add the card using the visual Lovelace editor or the YAML below. HACS registers the JavaScript resource in dashboard storage mode. For YAML-managed resources, use the resource URL shown by HACS.
 
 Install and configure [Dreame Vacuum](https://github.com/Tasshack/dreame-vacuum) before adding the card.
+
+This source checkout is version `2026.11.0d`.
 
 ## Manual installation
 
