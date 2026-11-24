@@ -6,6 +6,11 @@ const SETTING_DOMAINS = new Set(["button", "select", "number", "switch", "time",
 const PANEL_FEATURES = ["dock", "maintenance", "history", "remote", "editing"];
 const COLOR_SCHEMES = ["dreame_light", "dreame_dark", "dreame_auto", "mijia_light", "mijia_dark", "mijia_auto", "grayscale"];
 const ICON_SETS = ["dreame", "dreame_old", "mijia", "material"];
+const MAP_GLYPHS = {
+  dreame: { "floor-plan": "view-grid-outline", home: "home-variant", "map-marker-radius": "map-marker-radius-outline", "selection-drag": "select-drag" },
+  dreame_old: { "floor-plan": "view-grid", home: "home-variant-outline", "map-marker-radius": "map-marker-outline", "selection-drag": "selection" },
+  mijia: { "floor-plan": "view-dashboard-outline", home: "home-outline", "map-marker-radius": "crosshairs-gps", "selection-drag": "crop-free" },
+};
 const online = (state) => state && !["unavailable", "unknown"].includes(state.state);
 // A Home Assistant button has no last-pressed timestamp before its first press.
 const pressable = (state) => state && state.state !== "unavailable";
@@ -133,6 +138,10 @@ const FRENCH = {
   "map_camera must be a camera entity.": "map_camera doit être une entité camera.",
   "entities must contain entity IDs.": "entities doit contenir des identifiants d’entité.",
   "Command sent.": "Commande envoyée.",
+  "Saved.": "Enregistré.",
+  "Add cleaning area": "Ajouter une zone de nettoyage",
+  "Custom room cleaning": "Nettoyage personnalisé",
+  "Replace furniture on the active floor": "Remplacer les meubles de l’étage actif",
   "The command failed.": "La commande a échoué.",
   "Camera belongs to another device": "Caméra d’un autre appareil",
   "Choose a floor": "Choisir un étage",
@@ -227,11 +236,15 @@ export function mapPoint(calibration, coords) {
 
 export function roomMarkerPosition(calibration, bounds, width, height) {
   if (!bounds || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-  const { x0, y0, x1, y1 } = bounds;
-  if (![x0, y0, x1, y1].every(Number.isFinite) || x0 === x1 || y0 === y1) return null;
-  const center = projectPoint(calibration, [(x0 + x1) / 2, (y0 + y1) / 2], "vacuum", "map");
-  const fraction = center && [center[0] / width, center[1] / height];
-  return fraction?.every((axis) => axis >= 0 && axis <= 1) ? fraction : null;
+  const position = (point) => {
+    if (!point.every(Number.isFinite)) return null;
+    const projected = projectPoint(calibration, point, "vacuum", "map");
+    const fraction = projected && [projected[0] / width, projected[1] / height];
+    return fraction?.every((axis) => axis >= 0 && axis <= 1) ? fraction : null;
+  };
+  const { x, y, x0, y0, x1, y1 } = bounds;
+  return position([x, y]) ?? ([x0, y0, x1, y1].every(Number.isFinite) && x0 !== x1 && y0 !== y1
+    ? position([(x0 + x1) / 2, (y0 + y1) / 2]) : null);
 }
 
 export function mapArea(a, b) {
@@ -293,8 +306,11 @@ export function decodeMapScene(raw, { floor, mapId, frame } = {}) {
       return line && (line[0] !== line[2] || line[1] !== line[3]) ? [line] : [];
     });
   });
+  const obstacles = new Map((Array.isArray(raw.obstacles) ? raw.obstacles : []).flatMap(row =>
+    Array.isArray(row) && Number.isInteger(row[3]) ? [[String(row[0]), { type: row[3], ignored: row[5] > 0 }]] : []));
   return { left, top, width, height, step, pixels, layers, hiddenRooms, materials: raw.floor_material,
-    robot: raw.robot_position, dock: raw.charger_position, path: raw.path, walls, doors: raw.doors, furniture: raw.furnitures };
+    robot: raw.robot_position, dock: raw.charger_position, path: raw.path, walls, doors: raw.doors,
+    furniture: raw.furnitures, obstacles };
 }
 
 const roomPixel = (type) => type > 100 && type < 200 ? type - 100 : type;
@@ -575,9 +591,9 @@ const DOCK_SENSORS = ["clean_water_tank_status", "dirty_water_tank_status", "dus
 const ROOM_TYPES = [
   ["Living room", "sofa-outline"], ["Bedroom", "bed-king-outline"], ["Study", "bookshelf"],
   ["Kitchen", "stove"], ["Dining room", "silverware-fork-knife"], ["Bathroom", "toilet"],
-  ["Balcony", "flower-tulip-outline"], ["Utility room", "washing-machine"], ["Pantry", "cupboard-outline"],
+  ["Balcony", "flower-tulip-outline"], ["Hallway", "door"], ["Utility room", "washing-machine"],
   ["Closet", "hanger"], ["Meeting room", "presentation"], ["Office", "desktop-classic"],
-  ["Fitness", "dumbbell"], ["Lounge", "gamepad-variant-outline"], ["Children's room", "baby-carriage"],
+  ["Fitness", "dumbbell"], ["Lounge", "gamepad-variant-outline"], ["Secondary bedroom", "bed-single-outline"],
 ];
 
 const SETTINGS_CATEGORIES = [
@@ -789,11 +805,14 @@ export function buildCleaningTask(mode, selection = {}) {
   const integerPoint = (value) => Array.isArray(value) && value.length === 2
     && Number.isSafeInteger(value[0]) && Number.isSafeInteger(value[1]) ? value : null;
   if (mode === "global") return { action: "vacuum.start", data: {} };
+  const { repeats } = selection;
+  if (repeats != null && (![1, 2, 3].includes(repeats) || mode === "goto")) throw new Error("Choose one to three repeats.");
+  const options = repeats > 1 ? { repeats } : {};
   if (mode === "room") {
     if (!Array.isArray(selection.rooms) || !selection.rooms.length || !selection.rooms.every((id) => Number.isSafeInteger(id) && id > 0)) {
       throw new Error("Choose at least one room.");
     }
-    return { action: dreame("clean_segment"), data: { segments: [...selection.rooms] } };
+    return { action: dreame("clean_segment"), data: { segments: [...selection.rooms], ...options } };
   }
   if (mode === "zone") {
     const zones = selection.zones ?? [selection.corners];
@@ -801,12 +820,12 @@ export function buildCleaningTask(mode, selection = {}) {
       Array.isArray(corners) && corners.length === 2 && integerPoint(corners[0]) && integerPoint(corners[1])
       && mapArea(...corners));
     if (!rectangles?.length || !rectangles.every(Boolean)) throw new Error("Choose two corners for the zone.");
-    return { action: dreame("clean_zone"), data: { zone: rectangles.length === 1 ? rectangles[0] : rectangles } };
+    return { action: dreame("clean_zone"), data: { zone: rectangles.length === 1 ? rectangles[0] : rectangles, ...options } };
   }
   if (mode === "spot") {
     const points = selection.points ?? [selection.point];
     if (!Array.isArray(points) || !points.length || !Array.from(points).every(integerPoint)) throw new Error("Choose a valid spot point.");
-    return { action: dreame("clean_spot"), data: { points } };
+    return { action: dreame("clean_spot"), data: { points, ...options } };
   }
   if (mode === "goto") {
     const pointValue = integerPoint(selection.point);
@@ -836,6 +855,10 @@ export function mapEditPayload(operation, values = {}) {
   } else if (operation === "set_walls") {
     validateCoordinateRows(payload.doors, "doors", [6]);
     if (payload.walls) validateCoordinateRows(Object.values(payload.walls), "walls");
+  } else if (operation === "set_furniture") {
+    if (!payload.furnitures.every(row => Array.isArray(row) && row.length === 11
+      && row.every((value, index) => index === 8 ? Number.isFinite(value) && value > 0 : Number.isSafeInteger(value))
+      && row[3] > 0 && row[4] > 0)) throw new Error("Invalid furniture rows · furnitures");
   }
   return payload;
 }
@@ -1009,7 +1032,7 @@ const EDITS = [
     [["walls", "list", true], ["zones", "list", true], ["no_mops", "list", true]]],
   ["set_walls", "Replace physical walls and doors", [["walls", "object"], ["doors", "list"], ["map_id", "int"]]],
   ["set_floor_material", "Floor material", [["material", "object", true], ["map_id", "int"]]],
-  ["set_furniture", "Place furniture", [["furnitures", "list", true], ["map_id", "int"]]],
+  ["set_furniture", "Replace furniture on the active floor", [["furnitures", "list", true]]],
   ["set_custom_carpet_cleaning", "Carpet settings",
     [["id", "int", true], ["object_type", "int", true], ["carpet_cleaning", "int", true]]],
   ["set_obstacle_ignore", "Ignore or restore an obstacle",
@@ -1043,6 +1066,8 @@ const TEMPLATE = `
   .body.scheme-dreame-dark { --accent:#0099bf; --secondary-text-color:#bdbdbd; color:#eee; background:#1b1b1b; }
   .body.scheme-dreame-light { --accent:#0099bf; }
   .body.scheme-grayscale { --accent:#555; filter:grayscale(.85); }
+  .body.scheme-mijia { --accent:#007f6d; }
+  .body.scheme-mijia.scheme-dreame-dark { --accent:#40d1b7; }
   .body { position:relative; padding:16px 8px 20px; display:grid; gap:16px; container-type:inline-size; }
   h2,h3,p { margin:0; }
   h2 { font-size:20px; font-weight:500; }
@@ -1056,16 +1081,16 @@ const TEMPLATE = `
   #telemetry span { display:inline-flex; align-items:center; gap:5px; font-size:20px; }
   #telemetry small { font-size:11px; color:var(--secondary-text-color,#505050); }
   .no-animations, .no-animations * { transition:none !important; animation:none !important; }
-  .legacy-switches input[type=checkbox] { appearance:none; width:36px; height:20px; border-radius:10px;
+  .legacy-switches .setting-toggle { appearance:none; width:36px; height:20px; border-radius:10px;
     background:var(--divider-color,#bbb); position:relative; cursor:pointer; outline:none; transition:background .2s; }
-  .legacy-switches input[type=checkbox]:checked { background:var(--primary-color,#00bcd4); }
-  .legacy-switches input[type=checkbox]::before { content:""; position:absolute; width:16px; height:16px; border-radius:50%;
+  .legacy-switches .setting-toggle:checked { background:var(--primary-color,#00bcd4); }
+  .legacy-switches .setting-toggle::before { content:""; position:absolute; width:16px; height:16px; border-radius:50%;
     background:#fff; top:2px; left:2px; transition:transform .2s; box-shadow:0 1px 3px #0004; }
-  .legacy-switches input[type=checkbox]:checked::before { transform:translateX(16px); }
+  .legacy-switches .setting-toggle:checked::before { transform:translateX(16px); }
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   .has-side-panel #quick, .has-side-panel #modes, .has-side-panel #basic, .has-side-panel #menu { display:none !important; }
-  .has-side-panel figure { display:none; }
+  .has-side-panel:not(:has(#side-panel :is(#editor,#room-cleaning-settings))) figure { display:none; }
   .has-side-panel .stage { display:block; }
   #side-panel { display:flex; flex-direction:column; max-height:70vh; overflow-y:auto; padding:10px 14px;
     background:var(--card-background-color,#fff); border-radius:12px; box-shadow:0 1px 4px #0002; z-index:2; box-sizing:border-box; }
@@ -1106,7 +1131,7 @@ const TEMPLATE = `
   #map-layer.room-picking #map { cursor:crosshair; }
   img { display:block; max-width:100%; max-height:68vh; height:auto; object-fit:contain; }
   .panel-mode img { max-width:min(100%,804px); max-height:58vh; }
-  .panel-mode #rooms { display:none !important; }
+  .panel-mode:has(#room-markers[data-complete]:not([hidden])) #rooms { display:none; }
   #quick { grid-column:3; display:grid; align-content:end; gap:8px; }
   .left-handed #quick { grid-column:1; grid-row:1; }
   #menu { position:absolute; top:11px; right:11px; z-index:2; border:0; padding:0; }
@@ -1153,6 +1178,8 @@ const TEMPLATE = `
   #obstacle-dialog::backdrop, #room-dialog::backdrop { background:#0008; backdrop-filter:blur(4px); }
   #obstacle-dialog header, #room-dialog header { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0; text-align:start; }
   #room-type-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:8px; max-height:40vh; overflow-y:auto; padding:8px 0; }
+  #room-cleaning-settings form { display:grid; gap:8px; }
+  #room-markers button[data-preference] { outline:2px solid var(--accent); }
   .room-type-btn { display:grid; place-items:center; gap:4px; padding:10px 4px; border:0; border-radius:12px;
     background:var(--secondary-background-color,#f5f5f5); color:inherit; cursor:pointer; font:inherit; font-size:11px; }
   .room-type-btn[aria-pressed="true"] { background:var(--primary-color,#00bcd4); color:white; }
@@ -1304,6 +1331,7 @@ const TEMPLATE = `
   <details id="maintenance-detail" hidden><summary data-i18n>Accessory usage</summary><div id="maintenance"></div></details>
   <details id="objects-detail" hidden><summary data-i18n>Map objects</summary><div id="objects"></div></details>
   <details id="editor-detail" hidden><summary data-i18n>Map editor</summary><div id="editor"></div></details>
+  <details id="room-cleaning-detail" hidden><summary data-i18n>Custom room cleaning</summary><div id="room-cleaning-settings"></div></details>
   <details id="schedule-detail" hidden><summary data-i18n>Schedules</summary><div id="schedules"></div></details>
   <details id="shortcut-detail" hidden><summary data-i18n>Shortcuts</summary><div id="shortcuts"></div></details>
   <details id="remote-detail" hidden><summary data-i18n>Step-by-step remote control</summary><div id="remote"></div></details>
@@ -1376,44 +1404,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.part("obstacle-no-photo").hidden = false;
     });
     this.part("side-panel-back").addEventListener("click", () => this.closeSidePanel());
-    this.mapZoom = 1;
-    this.mapPan = { x: 0, y: 0 };
-    const layer = this.part("map-layer");
-    layer.addEventListener("wheel", (event) => {
-      const locked = this.config?.locked ?? "auto";
-      if (locked === "always") return;
-      event.preventDefault();
-      const factor = event.deltaY < 0 ? 1.25 : 0.8;
-      this.mapZoom = Math.min(5, Math.max(1, this.mapZoom * factor));
-      if (this.mapZoom <= 1.05) {
-        this.mapZoom = 1;
-        this.mapPan = { x: 0, y: 0 };
-      }
-      this.applyTransform();
-    }, { passive: false });
-    layer.addEventListener("dblclick", (event) => {
-      event.preventDefault();
-      this.mapZoom = 1;
-      this.mapPan = { x: 0, y: 0 };
-      this.applyTransform();
-    });
-    let dragStart = null;
-    layer.addEventListener("pointerdown", (event) => {
-      if (this.mapZoom > 1 && event.isPrimary && event.button === 0) {
-        dragStart = { x: event.clientX, y: event.clientY, panX: this.mapPan.x, panY: this.mapPan.y };
-        layer.setPointerCapture?.(event.pointerId);
-      }
-    });
-    layer.addEventListener("pointermove", (event) => {
-      if (dragStart) {
-        this.mapPan.x = dragStart.panX + (event.clientX - dragStart.x);
-        this.mapPan.y = dragStart.panY + (event.clientY - dragStart.y);
-        this.applyTransform();
-      }
-    });
-    const stopDrag = () => { dragStart = null; };
-    layer.addEventListener("pointerup", stopDrag);
-    layer.addEventListener("pointercancel", stopDrag);
+    this.bindMapGestures();
     for (const event of ["load", "error"]) map.addEventListener(event, () => {
       this.renderStructuredMap();
       this.renderRoomMarkers();
@@ -1431,9 +1422,117 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   part(id) { return this.shadowRoot.getElementById(id); }
 
+  bindMapGestures() {
+    const layer = this.part("map-layer");
+    const mode = () => this.config?.locked ?? "auto";
+    const active = () => this.mapZoom !== 1 || this.mapPan.x !== 0 || this.mapPan.y !== 0;
+    const control = event => event.target.closest("button,input,select");
+    let drag, touch, held, lastTap, holdTimer, mouseMoved;
+    const clearHold = () => clearTimeout(holdTimer);
+    this.resetMapViewport = () => {
+      clearHold();
+      drag = touch = lastTap = null;
+      held = mouseMoved = false;
+      this.mapZoom = 1;
+      this.mapPan = { x: 0, y: 0 };
+      this.applyTransform();
+    };
+    this.resetMapViewport();
+    const pan = (x, y) => {
+      this.mapPan.x += x;
+      this.mapPan.y += y;
+      this.applyTransform();
+    };
+    const zoom = (factor, x, y) => {
+      const rect = layer.getBoundingClientRect();
+      const next = Math.min(5, Math.max(1, this.mapZoom * factor));
+      const delta = 1 - next / this.mapZoom;
+      this.mapZoom = next;
+      pan((x - rect.left - rect.width / 2) * delta, (y - rect.top - rect.height / 2) * delta);
+    };
+    const doubleTap = (x, y) => active() ? this.resetMapViewport() : zoom(2, x, y);
+    layer.addEventListener("wheel", event => {
+      if (!active() && (mode() === "always" || (mode() === "auto" && !mouseMoved))) return;
+      event.preventDefault();
+      if (event.deltaY > 0 && this.mapZoom <= 1.25) this.resetMapViewport();
+      else zoom(event.deltaY < 0 ? 1.25 : .8, event.clientX, event.clientY);
+    }, { passive: false });
+    layer.addEventListener("dblclick", event => {
+      if (control(event)) return;
+      event.preventDefault();
+      doubleTap(event.clientX, event.clientY);
+    });
+    layer.addEventListener("pointerleave", () => { mouseMoved = false; });
+    layer.addEventListener("pointerdown", event => {
+      if (event.pointerType === "touch" || event.button !== 0 || control(event)
+        || (!active() && mode() !== "never")) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    });
+    layer.addEventListener("pointermove", event => {
+      if (event.pointerType === "touch") return;
+      mouseMoved = true;
+      if (drag?.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.captured && Math.hypot(dx, dy) < 5) return;
+      if (!drag.captured) layer.setPointerCapture(event.pointerId);
+      drag = { id: drag.id, x: event.clientX, y: event.clientY, captured: true };
+      pan(dx, dy);
+    });
+    for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      layer.addEventListener(name, event => { if (drag?.id === event.pointerId) drag = null; });
+    }
+    const point = touches => {
+      const [a, b] = touches;
+      return b ? { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2,
+        distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) }
+        : { x: a.clientX, y: a.clientY };
+    };
+    layer.addEventListener("touchstart", event => {
+      clearHold();
+      if (control(event) || !event.touches.length) return;
+      touch = { ...point(event.touches), moved: Boolean(touch?.moved || event.touches.length > 1) };
+      if (!held && mode() !== "always" && !touch.distance) {
+        holdTimer = setTimeout(() => { held = true; this.haptic("light"); }, this.config?.touch_lock ?? 100);
+      }
+    }, { passive: true });
+    layer.addEventListener("touchmove", event => {
+      if (!touch || !event.touches.length) return;
+      const next = point(event.touches);
+      const dx = next.x - touch.x, dy = next.y - touch.y;
+      if (!next.distance && !touch.moved && Math.hypot(dx, dy) < 5) return;
+      clearHold();
+      touch.moved = true;
+      const unlocked = active() || mode() === "never" || (mode() !== "always" && (held || next.distance));
+      if (!unlocked || !event.cancelable) return;
+      event.preventDefault();
+      if (next.distance && touch.distance) zoom(next.distance / touch.distance, touch.x, touch.y);
+      pan(dx, dy);
+      touch = { ...next, moved: true };
+    }, { passive: false });
+    layer.addEventListener("touchend", event => {
+      clearHold();
+      if (!touch) return;
+      if (event.touches.length) {
+        touch = { ...point(event.touches), moved: true };
+        return;
+      }
+      if (!touch.moved && !held) {
+        const now = performance.now();
+        if (lastTap && now - lastTap.time < 300 && Math.hypot(touch.x - lastTap.x, touch.y - lastTap.y) < 28) {
+          event.preventDefault();
+          doubleTap(touch.x, touch.y);
+          lastTap = null;
+        } else lastTap = { ...touch, time: now };
+      }
+      touch = null;
+    }, { passive: false });
+    layer.addEventListener("touchcancel", () => { clearHold(); touch = lastTap = null; }, { passive: true });
+  }
+
   connectedCallback() { this.update(); }
 
   disconnectedCallback() {
+    this.resetMapViewport();
     this.sceneRequest?.abort();
     this.sceneRequest = null;
     this.sceneKey = null;
@@ -1470,26 +1569,34 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     validateCardConfig(config);
     this.config = config;
+    this.resetMapViewport();
     this.mode = "global";
     this.shadowRoot.querySelector(".body").classList.toggle("panel-mode", config.mode === "panel");
-    const scheme = config.color_scheme ?? "dreame_light";
     const body = this.shadowRoot.querySelector(".body");
     body.classList.toggle("left-handed", config.left_handed === true);
     body.classList.toggle("full-height", config.full_height === true);
     body.classList.toggle("legacy-switches", config.legacy_switches === true);
     body.classList.toggle("no-animations", Boolean(config.hidden_card_objects?.includes("animations")));
-    body.classList.remove("icon-set-dreame", "icon-set-dreame_old", "icon-set-mijia", "icon-set-material");
-    body.classList.add(`icon-set-${config.icon_set ?? "dreame"}`);
     const figure = this.part("figure");
     figure.classList.toggle("ratio-frame", Boolean(config.aspect_ratio != null));
     figure.style.setProperty("--map-aspect-ratio", String(config.aspect_ratio ?? ""));
     this.applyHomeVisibility(config.hidden_card_objects ?? []);
-    body.classList.remove("scheme-dreame-dark", "scheme-dreame-light", "scheme-grayscale");
-    body.classList.add(`scheme-${scheme === "dreame_dark" ? "dreame-dark" : scheme === "grayscale" ? "grayscale" : "dreame-light"}`);
+    this.applyColorScheme();
     this.sections.clear();
     this.scope = undefined;
     this.clearPicks();
     this.update();
+  }
+
+  applyColorScheme() {
+    const scheme = this.config.color_scheme ?? "dreame_light";
+    const dark = scheme.endsWith("_dark") || (scheme.endsWith("_auto") && this.ha?.themes?.darkMode === true);
+    this.darkScheme = dark;
+    const classes = this.shadowRoot.querySelector(".body").classList;
+    classes.toggle("scheme-dreame-dark", dark);
+    classes.toggle("scheme-dreame-light", !dark && scheme !== "grayscale");
+    classes.toggle("scheme-grayscale", scheme === "grayscale");
+    classes.toggle("scheme-mijia", scheme.startsWith("mijia_"));
   }
 
   applyHomeVisibility(hiddenObjects) {
@@ -1502,11 +1609,6 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (hidden.has("controls")) this.part("modes").hidden = true;
     this.part("home-header").hidden = hidden.has("title") && hidden.has("state");
     if (hidden.has("menu")) this.part("menu").open = false;
-  }
-
-  static getStubConfig(hass) {
-    const entity = Object.keys(hass.states).find((id) => id.startsWith("vacuum."));
-    return entity ? { entity } : {};
   }
 
   getCardSize() { return this.config?.map_camera || !this.part("figure").hidden ? 8 : 4; }
@@ -1535,12 +1637,22 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   iconButton(label, name, onClick, { disabled = false, iconOnly = false } = {}) {
     const text = this.t(label);
     const button = this.button(iconOnly ? null : " " + text, onClick, disabled);
-    button.prepend(icon(name));
+    button.prepend(this.cardIcon(name));
     if (iconOnly) {
       button.setAttribute("aria-label", text);
       button.title = text;
     }
     return button;
+  }
+
+  cardIcon(name) { return icon(MAP_GLYPHS[this.config?.icon_set ?? "dreame"]?.[name] ?? name); }
+
+  haptic(effect) {
+    if (!this.config?.disable_haptic) this.emitHaptic(effect);
+  }
+
+  emitHaptic(effect) {
+    this.dispatchEvent(new CustomEvent("haptic", { detail: effect, bubbles: true, composed: true }));
   }
 
   renderTelemetry(attrs) {
@@ -1571,6 +1683,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   selectMode(mode) {
     const changed = this.mode !== mode;
     this.mode = mode;
+    if (changed) this.taskRepeats = 1;
     if (changed && this.editPickMode) this.cancelRestrictionEdit();
     else if (changed) this.clearPicks();
     this.shadowRoot.querySelector(".body").dataset.mode = mode;
@@ -1590,6 +1703,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.renderMapObjectLayers();
     this.renderZones();
     this.updateTargetButton();
+    if (changed && this.menuContext) this.renderMenu(...this.menuContext);
   }
 
   renderNavigation(hasRooms, tools, available) {
@@ -1609,6 +1723,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   toggleRoom(id, selected) {
     if (selected) this.roomSelection.add(id);
     else this.roomSelection.delete(id);
+    this.haptic("selection");
     this.syncRoomSelection();
   }
 
@@ -1634,14 +1749,16 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     target.hidden = this.mode !== "room" || !this.mapPicking || !img.complete || !img.naturalWidth;
     if (target.hidden) return;
     const markers = this.markerRooms.flatMap(([id, room, label]) => {
-      // shortcut: anchor badges to the bounds center until segment label coordinates are available.
       const position = roomMarkerPosition(this.calibration, room, img.naturalWidth, img.naturalHeight);
       const symbol = typeof room.icon === "string" && /^mdi:[a-z0-9-]+$/.test(room.icon) ? room.icon.slice(4) : "floor-plan";
       return position ? [[id, label, symbol, room, ...position]] : [];
     });
+    target.toggleAttribute("data-complete", markers.length > 0
+      && markers.length === this.part("rooms").querySelectorAll("input[value]").length);
     this.section("room-markers", markers, (node) => node.replaceChildren(...markers.map(([id, label, symbol, room, x, y]) => {
       const button = this.button(null, () => {
-        if (this.part("edit-detail").open) return this.openRoomDialog(id, label);
+        if (this.viewOpen("edit-detail") && this.canRenameRoom()) return this.openRoomDialog(id, label);
+        if (this.viewOpen("room-cleaning-detail")) return this.selectRoomPreference(id);
         this.toggleRoom(id, !this.roomSelection.has(id));
       });
       button.setAttribute("aria-label", label);
@@ -1671,7 +1788,16 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const hidden = new Set(mapPresentation(this.config, this.mapIndex).hidden_objects ?? []);
     const hiddenByKind = { obstacles: "obstacle", carpets: "carpet", furniture: "furniture" };
     const markers = mapObjectMarkers(this.currentMap, this.calibration, img.naturalWidth, img.naturalHeight)
-      .filter(({ kind }) => !hidden.has(hiddenByKind[kind]));
+      .filter(({ kind, key }) => {
+        if (hidden.has(hiddenByKind[kind])) return false;
+        if (kind !== "obstacles") return true;
+        const obstacle = this.currentMap.obstacles?.[key];
+        const metadata = this.mapScene?.obstacles.get(key);
+        const pet = metadata?.type === 158 || String(obstacle?.type).toLowerCase() === "pet";
+        const ignored = metadata?.ignored || /^(manually|automatically) ignored$/i.test(obstacle?.ignore_status)
+          || [1, 2].includes(obstacle?.ignore_status);
+        return !(pet && hidden.has("pet")) && !(ignored && hidden.has("ignored_obstacles"));
+      });
     target.hidden = !this.mapPicking || !img.complete || !img.naturalWidth || !markers.length;
     if (target.hidden) return;
     const furnitureIcons = hidden.has("furniture_image");
@@ -1716,31 +1842,56 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   openRoomDialog(roomId, roomName) {
     const dialog = this.part("room-dialog");
-    if (dialog.open) return;
+    if (dialog.open || !this.canRenameRoom()) return;
+    const scope = this.scope;
+    const floor = this.roomFloor;
+    const room = this.markerRooms.find(([id]) => id === roomId)?.[1];
+    let preset;
     this.part("room-dialog-heading").textContent = `${roomId}: ${roomName ?? ""}`.trim();
     const input = this.part("room-name-input");
     input.value = roomName ?? "";
     const grid = this.part("room-type-grid");
     grid.replaceChildren();
-    for (const [type, iconName] of ROOM_TYPES) {
+    for (const [index, [type, iconName]] of ROOM_TYPES.entries()) {
+      const code = index + 1;
       const btn = element("button", null, { type: "button", class: "room-type-btn",
-        "aria-label": this.t(type), "aria-pressed": String(roomName === this.t(type)) });
+        "aria-label": this.t(type), "aria-pressed": String(room?.type === code) });
       btn.append(icon(iconName), element("span", this.t(type)));
       btn.addEventListener("click", () => {
+        preset = code;
         input.value = this.t(type);
         for (const sibling of grid.children) sibling.setAttribute("aria-pressed", String(sibling === btn));
       });
       grid.append(btn);
     }
+    input.oninput = () => {
+      preset = undefined;
+      for (const button of grid.children) button.setAttribute("aria-pressed", "false");
+    };
     const form = this.part("room-name-form");
     form.onsubmit = async (event) => {
       event.preventDefault();
-      dialog.close();
-      if (input.value) {
-        await this.run(dreame("rename_segment"), { segment_id: Number(roomId), segment_name: input.value });
+      if (!dialog.open || scope !== this.scope || floor !== this.roomFloor || !this.canRenameRoom()
+        || !this.markerRooms.some(([id]) => id === roomId)) return;
+      const typeAction = dreame("set_segment_type");
+      const name = input.value.trim();
+      if (preset && hasAction(this.ha, typeAction)) {
+        const used = new Set(this.markerRooms.filter(([id, value]) => id !== roomId && value.type === preset)
+          .map(([, value]) => value.index));
+        let index = room?.type === preset && Number.isSafeInteger(room.index) ? room.index : 0;
+        while (used.has(index)) index++;
+        dialog.close();
+        await this.run(typeAction, { map_id: floor, type: { [roomId]: [preset, index, 0] } });
+      } else if (name && hasAction(this.ha, dreame("rename_segment"))) {
+        dialog.close();
+        await this.run(dreame("rename_segment"), { segment_id: roomId, segment_name: name });
       }
     };
     dialog.showModal();
+  }
+
+  canRenameRoom() {
+    return this.roomFloor != null && (hasAction(this.ha, dreame("rename_segment")) || hasAction(this.ha, dreame("set_segment_type")));
   }
 
   renderMapObjectLayers() {
@@ -1769,9 +1920,8 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       return start && end ? [{ className, start, end }] : [];
     });
     const hidden = new Set(presentation.hidden_objects ?? []);
-    const editor = this.part("editor-detail");
     const polygons = RESTRICTION_LISTS
-      .filter(({ field }) => (editor.open && !editor.hidden) || !hidden.has(field === "zones" ? "no_go" : "no_mop"))
+      .filter(({ field }) => this.viewOpen("editor-detail") || !hidden.has(field === "zones" ? "no_go" : "no_mop"))
       .flatMap(({ field, attr }) => rectangles(attrs[attr], field === "no_mops" ? "restricted mop" : "restricted", field));
     if (!hidden.has("carpet")) polygons.push(...rectangles(attrs.carpets, "carpet"));
     if (this.editPickMode && this.picks.length === 2) {
@@ -1963,12 +2113,16 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (this.mode === "global" || this.editPickMode) return;
     if (this.mode !== "room") return this.sendPicks();
     if (!this.roomSelection.size) return;
-    const { action, data: payload } = buildCleaningTask("room", { rooms: [...this.roomSelection] });
+    const { action, data: payload } = buildCleaningTask("room", {
+      rooms: [...this.roomSelection], repeats: this.customCleaningEnabled ? undefined : this.taskRepeats,
+    });
     return this.run(action, payload);
   }
 
   renderMenu(basic, available) {
+    this.menuContext = [basic, available];
     const panels = [["cleaning-detail", "Cleaning settings", "tune-variant"],
+      ["room-cleaning-detail", "Custom room cleaning", "tune"],
       ["editor-detail", "Map editor", "map-outline"], ["edit-detail", "Map editing and management", "home-edit"],
       ["photos-detail", "History and photos", "history"], ["schedule-detail", "Schedules", "calendar-clock"],
       ["shortcut-detail", "Shortcuts", "lightning-bolt-outline"],
@@ -1977,19 +2131,35 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       .filter(([id]) => !this.part(id).hidden);
     const floors = this.part("floors").childElementCount > 0;
     const hasShortcuts = !this.part("shortcut-detail").hidden;
+    const targetMode = this.mode === "zone" || this.mode === "spot";
+    const repeats = targetMode || (this.mode === "room" && !this.customCleaningEnabled);
     const quick = [
       hasShortcuts ? panels.find(([id]) => id === "shortcut-detail") : null,
       panels.find(([id]) => id === "cleaning-detail"),
-      floors ? ["floors", "Switch floor", "layers"] : null,
-      panels.find(([id]) => id === "settings-detail"),
+      targetMode ? ["add-area", "Add cleaning area", "plus"] : null,
+      repeats ? ["repeats", "Repeats", "repeat"] : null,
+      this.mode === "room" ? panels.find(([id]) => id === "room-cleaning-detail") : null,
+      !targetMode && floors ? ["floors", "Switch floor", "layers"] : null,
+      !targetMode && this.mode !== "room" ? panels.find(([id]) => id === "settings-detail") : null,
     ].filter(Boolean);
     this.section("quick", quick, (node) => node.replaceChildren(...quick.map(([id, label, name]) => {
+      if (id === "add-area") return this.iconButton(label, name, () => this.addAreaDraft(), { iconOnly: true });
+      if (id === "repeats") return this.button(null, () => {
+        this.taskRepeats = (this.taskRepeats ?? 1) % 3 + 1;
+        this.renderTaskRepeats();
+        this.haptic("selection");
+      });
       if (id === "floors") return this.iconButton(label, name, () => {
         this.part("floors").hidden = false;
         this.part("floors").querySelector("select")?.focus();
       }, { iconOnly: true });
       return this.iconButton(label, name, () => this.openView(id), { iconOnly: true });
     })));
+    if (repeats) {
+      const button = this.part("quick").children[quick.findIndex(([id]) => id === "repeats")];
+      button.id = "task-repeats";
+      this.renderTaskRepeats();
+    }
     const locate = basic.find(([action]) => action === "vacuum.locate");
     const refresh = basic.find(([action]) => action === dreame("request_map"));
     this.section("menu-items", [panels, locate, refresh, floors, available], (node) => {
@@ -2006,9 +2176,41 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     });
   }
 
+  renderTaskRepeats() {
+    const button = this.part("task-repeats");
+    if (!button) return;
+    button.textContent = `×${this.taskRepeats ?? 1}`;
+    button.title = `${this.t("Repeats")}: ${this.taskRepeats ?? 1}`;
+    button.setAttribute("aria-label", this.t("Repeats"));
+  }
+
+  addAreaDraft() {
+    const img = this.part("map");
+    const rect = img.getBoundingClientRect();
+    const figure = this.part("figure").getBoundingClientRect();
+    const left = Math.max(rect.left, figure.left), right = Math.min(rect.right, figure.right);
+    const top = Math.max(rect.top, figure.top), bottom = Math.min(rect.bottom, figure.bottom);
+    if (this.editPickMode || this.zoneDrag || right <= left || bottom <= top) return;
+    const offsets = this.mode === "zone" ? [.44, .56] : [.5];
+    const points = offsets.map(offset => this.mapPointer({
+      clientX: left + (right - left) * offset, clientY: top + (bottom - top) * offset,
+    }));
+    if (points.some(point => !point || !this.canPickPoint(point.coords))) {
+      return this.status("Choose a point on the mapped floor.", true);
+    }
+    if (this.mode === "zone" && this.picks.length) return this.status("Complete the selection.", true);
+    for (const point of points) this.addPick(point.coords, point.pin);
+  }
+
+  viewOpen(id) {
+    const panel = this.part(id);
+    return !panel.hidden && (this.sidePanelSource?.panel === panel || panel.open);
+  }
+
   openView(id) {
     this.part("menu").open = false;
     const panel = this.part(id);
+    if (id === "room-cleaning-detail") this.selectMode("room");
     const body = this.shadowRoot.querySelector(".body");
     const isPanel = body.classList.contains("panel-mode");
     if (isPanel) {
@@ -2022,11 +2224,14 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       content.replaceChildren(...children);
       sidePanel.hidden = false;
       body.classList.add("has-side-panel");
+      if (id === "room-cleaning-detail") this.renderRoomPreferences();
+      if (id === "editor-detail") this.renderMapObjectLayers();
       this.part("side-panel-back").focus();
       return;
     }
     this.part("views").hidden = false;
     panel.open = true;
+    if (id === "room-cleaning-detail") this.renderRoomPreferences();
     panel.querySelector("summary")?.focus();
   }
 
@@ -2039,6 +2244,12 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const { panel, children } = this.sidePanelSource;
       panel.append(...children);
       this.sidePanelSource = null;
+      if (panel.id === "room-cleaning-detail") this.renderRoomPreferences();
+      if (panel.id === "editor-detail") {
+        panel.open = false;
+        if (this.editPickMode) this.cancelRestrictionEdit();
+        else this.renderMapObjectLayers();
+      }
     }
   }
 
@@ -2158,33 +2369,63 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.renderCollectionPanel("device-shortcuts", hideNative ? shortcuts : [], shortcutAction);
   }
 
-  renderRoomPreferences(node, roomIds, available) {
-    if (!hasAction(this.ha, dreame("set_custom_cleaning"))) return;
-    const detail = element("details");
-    detail.append(element("summary", this.t("Cleaning preferences")));
-    const form = element("form");
-    const fields = [
-      ["segment_id", "Room IDs", JSON.stringify(roomIds)], ["suction_level", "Suction", "[]"],
-      ["water_volume", "Water", "[]"], ["repeats", "Repeats", "[]"],
-    ];
-    const inputs = Object.fromEntries(fields.map(([name, label, value]) => {
-      const input = element("input", null, { name, type: "text", value, placeholder: "JSON […]" });
-      form.append(this.label(this.t(label), input));
-      return [name, input];
-    }));
-    const confirm = element("input", null, { type: "checkbox" });
-    form.append(this.label(this.t("Confirm this action on the robot"), confirm));
-    form.append(this.button(this.t("Apply room settings"), async () => {
-      if (!confirm.checked) return this.status("Confirm the action", true);
-      try {
-        const payload = customCleaningPayload(Object.fromEntries(Object.entries(inputs).map(([name, input]) => [name, input.value])));
-        await this.run(dreame("set_custom_cleaning"), payload);
-        confirm.checked = false;
-      } catch (error) { this.status(error.message, true); }
-    }, !available, true));
-    form.addEventListener("submit", (event) => event.preventDefault());
-    detail.append(form);
-    node.append(detail);
+  selectRoomPreference(id) {
+    if (!this.roomPreferences.some(([room]) => room === id)) return;
+    this.roomPreferenceId = id;
+    this.haptic("selection");
+    this.renderRoomPreferences();
+  }
+
+  renderRoomPreferences() {
+    const rooms = this.roomPreferences;
+    this.part("room-cleaning-detail").hidden = !rooms.length;
+    const selected = rooms.find(([id]) => id === this.roomPreferenceId) ?? rooms[0];
+    for (const marker of this.part("room-markers").children) {
+      marker.toggleAttribute("data-preference", this.viewOpen("room-cleaning-detail") && Number(marker.dataset.room) === selected?.[0]);
+    }
+    const scope = this.scope;
+    this.section("room-cleaning-settings", [scope, rooms, selected?.[0]], node => {
+      node.replaceChildren();
+      if (!selected) return;
+      const [id, room] = selected;
+      const roomPicker = element("select");
+      roomPicker.append(...rooms.map(([roomId, , name]) => element("option", name || `${this.t("Room")} ${roomId}`, { value: roomId })));
+      roomPicker.value = String(id);
+      roomPicker.addEventListener("change", () => this.selectRoomPreference(Number(roomPicker.value)));
+      const form = element("form");
+      form.append(this.label(this.t("Rooms"), roomPicker));
+      const fields = [
+        ["suction_level", "Suction", room.suction_level, [0, 1, 2, 3], ["Quiet", "Standard", "Strong", "Turbo"]],
+        ["repeats", "Repeats", room.cleaning_times, [1, 2, 3]],
+        ["cleaning_mode", "Cleaning mode", room.cleaning_mode, [0, 1, 2], ["Sweep", "Mop", "Sweep and mop"]],
+        ["mop_pressure", "Mop pressure", ({ Light: 0, Normal: 2 })[room.mop_pressure], [0, 2], ["Light", "Normal"]],
+      ];
+      if (Number.isInteger(room.wetness_level) && room.wetness_level >= 1 && room.wetness_level <= 32) {
+        fields.push(["wetness_level", "Water", room.wetness_level, Array.from({ length: 32 }, (_, i) => i + 1)]);
+      } else fields.push(["water_volume", "Water", room.water_volume, [1, 2, 3]]);
+      const inputs = fields.flatMap(([name, label, value, options, labels]) => {
+        if (!options.includes(value)) return [];
+        const input = element("select", null, { name });
+        input.append(...options.map((option, index) => element("option", labels ? this.t(labels[index]) : option, { value: option })));
+        input.value = String(value);
+        form.append(this.label(this.t(label), input));
+        return [input];
+      });
+      const confirm = element("input", null, { type: "checkbox" });
+      const apply = element("button", this.t("Apply room settings"), { type: "submit", class: "primary" });
+      form.append(this.label(this.t("Confirm this action on the robot"), confirm), apply);
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (!confirm.checked) return this.status("Confirm the action", true);
+        if (scope !== this.scope || !form.isConnected || !this.roomPreferences.some(([roomId]) => roomId === id)) return;
+        try {
+          const values = { segment_id: [id], ...Object.fromEntries(inputs.map(input => [input.name, [Number(input.value)]])) };
+          const payload = customCleaningPayload(values);
+          if (await this.run(dreame("set_custom_cleaning"), payload)) confirm.checked = false;
+        } catch (error) { this.status(error.message, true); }
+      });
+      node.append(form);
+    });
   }
 
   async run(action, data = {}, id = this.config.entity) {
@@ -2193,10 +2434,14 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.pending.add(pendingKey);
     try {
       await callAction(this.ha, id, action, data);
-      this.status("Command sent.");
+      const save = action === dreame("set_segment_type") || EDITS.some(([key]) => dreame(key) === action);
+      const hideSaved = save && this.config.hidden_card_objects?.includes("saved_notification");
+      this.status(hideSaved ? "" : save ? "Saved." : "Command sent.");
+      this.emitHaptic("success");
       return true;
     } catch (error) {
       this.status(error?.message || "The command failed.", true);
+      this.emitHaptic("failure");
       return false;
     } finally {
       this.pending.delete(pendingKey);
@@ -2204,16 +2449,14 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   }
 
   discoverMapCamera(deviceId) {
-    if (!deviceId) return null;
-    const matches = Object.entries(this.ha.entities).filter(([id, entry]) => id.startsWith("camera.")
-      && entry?.device_id === deviceId && entry.platform === DOMAIN && entry.translation_key === "map");
-    return matches.length === 1 ? matches[0][0] : null;
+    return discoverMapCamera(this.ha, deviceId);
   }
 
   loadStructuredMap(image, identity, camera) {
-    const { background_image, overlay_image } = mapPresentation(this.config, this.mapIndex);
+    const { background_image, overlay_image, hidden_objects } = mapPresentation(this.config, this.mapIndex);
     const canvasMode = ["structured", "floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(this.config.map_display);
-    const url = this.isConnected && (canvasMode || background_image || overlay_image) && this.mapPicking
+    const needsObstacleTypes = hidden_objects?.some(key => key === "pet" || key === "ignored_obstacles");
+    const url = this.isConnected && (canvasMode || background_image || overlay_image || needsObstacleTypes) && this.mapPicking
       && identity.floor != null && identity.frame != null ? mapDataURL(image, camera) : null;
     const key = url ? JSON.stringify([url, identity]) : null;
     if (this.sceneKey === key) {
@@ -2236,6 +2479,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (request.signal.aborted) return;
       this.mapScene = decodeMapScene(raw, identity);
       this.renderStructuredMap();
+      this.renderObjectMarkers();
     } catch (error) {
       if (!(request.signal.aborted || error instanceof TypeError || error instanceof SyntaxError)) throw error;
     } finally {
@@ -2246,9 +2490,9 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   applyTransform() {
     const layer = this.part("map-layer");
     const parts = [];
-    if (this.mapRotation) parts.push(`rotate(${this.mapRotation}deg)`);
+    if (this.mapPan.x || this.mapPan.y) parts.push(`translate(${this.mapPan.x}px, ${this.mapPan.y}px)`);
     if (this.mapZoom !== 1) parts.push(`scale(${this.mapZoom})`);
-    if (this.mapPan?.x || this.mapPan?.y) parts.push(`translate(${this.mapPan.x / this.mapZoom}px, ${this.mapPan.y / this.mapZoom}px)`);
+    if (this.mapRotation) parts.push(`rotate(${this.mapRotation}deg)`);
     layer.style.transform = parts.join(" ");
   }
 
@@ -2271,7 +2515,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const colors = { ...overrides, ...(this.ha?.themes?.darkMode ? dark : {}) };
     const rooms = colors.segment ? this.currentMap?.rooms : undefined;
     const selected = this.roomSelection;
-    const paintKey = JSON.stringify([this.config.color_scheme, this.config.map_display, this.calibration, img.naturalWidth, img.naturalHeight,
+    const paintKey = JSON.stringify([this.darkScheme, this.config.map_display, this.calibration, img.naturalWidth, img.naturalHeight,
       presentation, colors, rooms, colors.segment ? [...selected] : null]);
     const isFloorPlan = ["floor_plan", "floor_plan_without_texture", "floor_plan_only"].includes(this.config.map_display);
     const scene = this.mapPicking && img.complete && (this.config.map_display === "structured"
@@ -2362,6 +2606,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   update() {
     if (!this.config || !this.ha) return;
+    this.applyColorScheme();
     this.updateLanguage();
     const { entity, title } = this.config;
     const robotDevice = this.ha.entities?.[entity]?.device_id;
@@ -2383,6 +2628,9 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (this.pendingFloor && String(activeMapId) === requestedFloor && cameraConfirmed) this.pendingFloor = null;
     const liveMap = !this.pendingFloor && relatedCamera && online(camera) && map.selected !== false
       && (activeMapId == null || cameraMapId == null || String(activeMapId) === String(cameraMapId));
+    const floorId = Number(activeMapId);
+    this.roomFloor = available && liveMap && !attrs.has_temporary_map && cameraMapId != null
+      && Number.isSafeInteger(floorId) && floorId > 0 ? floorId : null;
     const image = relatedCamera && online(camera) ? localImage(map.entity_picture) : null;
     const imageNode = this.part("map");
     const display = this.config.map ?? {};
@@ -2411,9 +2659,11 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const scope = JSON.stringify([entity, map_camera, activeMapId, attrs.selected_map, cameraMapId, map.map_id, this.calibration, available]);
     if (scope !== this.scope) {
       this.scope = scope;
+      this.resetMapViewport();
       this.roomSelection.clear();
       this.objectSelection = null;
       this.part("obstacle-dialog").close();
+      this.part("room-dialog").close();
       this.resetRestrictionDraft();
       this.clearPicks();
     }
@@ -2486,6 +2736,11 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     ).map(([key, room]) => [Number(room?.room_id ?? room?.id ?? key), room, room?.name])
       .filter(([id]) => Number.isSafeInteger(id) && id > 0);
     const hasRoomAction = can(dreame("clean_segment"));
+    const customCleaning = dreameEntity(this.ha, this.config, deviceEntities(this.ha, this.config), "switch", "customized_cleaning");
+    this.customCleaningEnabled = this.ha.states[customCleaning]?.state === "on";
+    this.roomPreferences = ["idle", "docked"].includes(state) && this.roomFloor != null && can(dreame("set_custom_cleaning"))
+      ? selectedRooms.filter(([, room]) => [0, 1, 2, 3].includes(room?.suction_level) && [1, 2, 3].includes(room?.cleaning_times))
+      : [];
     const visibleRoomIds = new Set(hasRoomAction ? selectedRooms.map(([id]) => id) : []);
     for (const id of this.roomSelection) if (!visibleRoomIds.has(id)) this.roomSelection.delete(id);
     this.markerRooms = hasRoomAction && cameraRooms && cameraMapId != null
@@ -2500,7 +2755,6 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         box.addEventListener("change", () => this.toggleRoom(id, box.checked));
         node.append(this.label(label || this.t("Room") + " " + id, box));
       }
-      this.renderRoomPreferences(node, selectedRooms.map(([id]) => id), available);
     });
 
     const tools = TOOLS.filter(([, , action]) => can(action));
@@ -2590,9 +2844,10 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const edits = EDITS.filter(([key]) => can(dreame(key))
       && (!key.endsWith("temporary_map") || attrs.has_temporary_map === true));
     this.part("edit-detail").hidden = this.config.features?.editing === false || !edits.length;
-    this.section("edit", [edits.map(([key]) => key), available, activeMapId, this.restrictions, this.canEditRestrictions()],
+    this.section("edit", [edits.map(([key]) => key), available, this.scope, this.restrictions, this.canEditRestrictions()],
       (node) => this.renderEdits(node, edits, available));
     this.renderNavigation(visibleRoomIds.size > 0, calibrated ? tools : [], available);
+    this.renderRoomPreferences();
     this.syncRoomSelection();
     this.renderMenu(basic, available);
   }
@@ -2606,22 +2861,23 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   selectedTool() { return TOOLS.find(([key]) => key === this.toolSelect?.value); }
 
   pickOnMap(event) {
-    const editor = this.part("editor-detail");
-    if (this.editPickMode && !editor.open) this.cancelRestrictionEdit();
+    const editorOpen = this.viewOpen("editor-detail");
+    if (this.editPickMode && !editorOpen) this.cancelRestrictionEdit();
     if (this.editPickMode) {
       const pick = this.mapPointer(event);
       if (pick && !this.editRemove) this.addPick(pick.coords, pick.pin);
       return;
     }
-    if (editor.open && !editor.hidden && this.canEditRestrictions()
+    if (editorOpen && this.canEditRestrictions()
       && this.selectRestrictionAt(this.mapPointer(event))) return;
-    if (this.part("edit-detail").open && this.structuredVisible) {
+    if ((this.viewOpen("edit-detail") || this.viewOpen("room-cleaning-detail")) && this.structuredVisible) {
       const pick = this.mapPointer(event);
       if (pick) {
         const pixel = scenePixel(this.mapScene, pick.coords);
         if (isRoomFloor(pixel) && this.markerRooms.some(([room]) => room === pixel)) {
           const roomEntry = this.markerRooms.find(([room]) => room === pixel);
-          return this.openRoomDialog(pixel, roomEntry?.[2]);
+          if (this.viewOpen("room-cleaning-detail")) return this.selectRoomPreference(pixel);
+          if (this.canRenameRoom()) return this.openRoomDialog(pixel, roomEntry?.[2]);
         }
       }
     }
@@ -2817,14 +3073,14 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     if (this.mode === "spot") {
       if (!this.picks.length) return;
       const picks = this.picks;
-      const { action, data: payload } = buildCleaningTask("spot", { points: picks.map(({ coords }) => coords) });
+      const { action, data: payload } = buildCleaningTask("spot", { points: picks.map(({ coords }) => coords), repeats: this.taskRepeats });
       if (await this.run(action, payload) && this.picks === picks) this.clearPicks();
       return;
     }
     if (this.mode === "zone") {
       if (!this.zones.length || this.picks.length || this.zoneDrag) return;
       const zones = this.zones;
-      const { action, data: payload } = buildCleaningTask("zone", { zones });
+      const { action, data: payload } = buildCleaningTask("zone", { zones, repeats: this.taskRepeats });
       if (await this.run(action, payload) && this.zones === zones && !this.picks.length) this.clearPicks();
       return;
     }
@@ -2870,13 +3126,13 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         }
         row.append(group);
       } else if (domain === "switch") {
-        const toggle = element("input", null, { type: "checkbox", class: "setting-toggle" });
+        const toggle = element("input", null, { type: "checkbox", class: "setting-toggle", "aria-label": this.t(label), role: "switch" });
         toggle.checked = current === "on";
         toggle.addEventListener("change", () =>
           this.run(toggle.checked ? "switch.turn_on" : "switch.turn_off", {}, id));
         row.append(toggle);
       } else if (domain === "number") {
-        const slider = element("input", null, { type: "range", min: String(a.min ?? 1), max: String(a.max ?? 30),
+        const slider = element("input", null, { type: "range", "aria-label": this.t(label), min: String(a.min ?? 1), max: String(a.max ?? 30),
           step: String(a.step ?? 1), value: current, class: "setting-slider" });
         slider.addEventListener("change", () => this.run("number.set_value", { value: slider.valueAsNumber }, id));
         row.append(slider);
@@ -2934,7 +3190,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     if (domain === "switch") {
       action = state.state === "on" ? "switch.turn_off" : "switch.turn_on";
-      control = element("input", null, { type: "checkbox" });
+      control = element("input", null, { type: "checkbox", role: "switch", class: "setting-toggle" });
       control.checked = state.state === "on";
       payload = () => ({});
     } else if (domain === "select" && Array.isArray(a.options)) {
@@ -2993,10 +3249,12 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     select.append(...edits.map(([value, label]) => element("option", this.t(label), { value })));
     select.disabled = !available;
     const form = element("form");
+    const scope = this.scope;
     const fill = () => {
       form.replaceChildren();
       const [key, title, fields] = edits.find(([value]) => value === select.value);
       const restriction = key === "set_restricted_zone";
+      const furniture = key === "set_furniture";
       const snapshot = this.restrictions;
       for (const [name, type, required] of fields) {
         const input = element("input", null, { name, type: type === "int" ? "number" : "text" });
@@ -3009,6 +3267,8 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       const ack = element("input", null, { type: "checkbox" });
       form.append(this.label(this.t("Confirm this action on the robot"), ack));
       form.append(this.button(this.t("Apply"), async () => {
+        if (scope !== this.scope || !form.isConnected
+          || (furniture && (this.roomFloor == null || this.pendingFloor))) return;
         if (!form.reportValidity()) return;
         if (!ack.checked) {
           this.status("Confirm the action · " + this.t(title), true);
@@ -3022,7 +3282,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
           if (restriction) await this.writeRestrictions(snapshot, data);
           else await this.run(dreame(key), data);
         } catch (error) { this.status(error.message, true); }
-      }, !available || (restriction && !this.canEditRestrictions(snapshot))));
+      }, !available || (restriction && !this.canEditRestrictions(snapshot)) || (furniture && this.roomFloor == null)));
     };
     select.addEventListener("change", fill);
     form.addEventListener("submit", (event) => event.preventDefault());
@@ -3030,15 +3290,31 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     node.append(select, form);
   }
 
-  static async getConfigElement() {
-    return globalThis.document ? document.createElement("dreame-open-card-editor") : { tagName: "DREAME-OPEN-CARD-EDITOR" };
+  static getConfigElement() {
+    return document.createElement("dreame-open-card-editor");
   }
 
   static getStubConfig(hass, entities) {
-    const vacuum = entities?.find((e) => e.startsWith("vacuum."));
+    const vacuum = entities?.find((id) => id.startsWith("vacuum."))
+      ?? Object.keys(hass?.states ?? {}).find((id) => id.startsWith("vacuum."));
     return { entity: vacuum ?? "vacuum.robot" };
   }
 }
+
+function discoverMapCamera(hass, deviceId) {
+  if (!deviceId) return null;
+  const matches = Object.entries(hass.entities ?? {}).filter(([id, entry]) => id.startsWith("camera.")
+    && entry?.device_id === deviceId && entry.platform === DOMAIN && entry.translation_key === "map");
+  return matches.length === 1 ? matches[0][0] : null;
+}
+
+const EDITOR_VISIBILITY = {
+  hidden_card_objects: ["title", "state", "status", "menu", "controls", "task_type", "action_buttons", "animations",
+    "shortcuts", "cruising_history", "saved_notification", "map_change_confirmation"],
+  hidden_objects: ["customized_cleaning", "floor", "material", "name", "name_background", "order", "walls", "doors",
+    "obstacle", "obstacle_background", "ignored_obstacles", "furniture", "furniture_image", "path", "pet",
+    "no_go", "no_mop", "virtual_wall", "carpet", "charger", "vacuum"],
+};
 
 export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
   constructor() {
@@ -3052,9 +3328,12 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
           input, select { padding:8px 10px; border-radius:8px; border:1px solid var(--divider-color,#ccc);
             background:var(--card-background-color,#fff); color:inherit; font:inherit; }
           .toggle-row { display:flex; align-items:center; justify-content:space-between; }
+          .visibility { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:5px; padding:8px 0; }
+          #map-information { white-space:pre-line; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
         </style>
         <div class="form">
-          <div class="row"><label>Entity</label><input name="entity" placeholder="vacuum.robot" required></div>
+          <div class="row"><label>Entity</label><input name="entity" pattern="vacuum\\.[a-z0-9_]+" placeholder="vacuum.robot" required></div>
+          <div class="row"><label>Map camera</label><input name="map_camera" pattern="camera\\.[a-z0-9_]+" placeholder="Automatic"></div>
           <div class="row"><label>Title</label><input name="title" placeholder="Optional custom title"></div>
           <div class="row"><label>Mode</label>
             <select name="mode"><option value="default">Default</option><option value="panel">Panel</option></select>
@@ -3095,12 +3374,30 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
               <option value="always">Always</option>
             </select>
           </div>
-          <div class="row"><label>Aspect Ratio</label><input name="aspect_ratio" type="number" step="0.1" placeholder="e.g. 1.5"></div>
+          <div class="row"><label>Aspect Ratio</label><input name="aspect_ratio" type="number" min="0.1" max="100" step="any" placeholder="e.g. 1.5"></div>
+          <div class="row"><label>Touch hold (ms)</label><input name="touch_lock" type="number" min="100" max="400" placeholder="100"></div>
+          <div class="toggle-row"><label>Disable interaction haptics</label><input name="disable_haptic" type="checkbox"></div>
           <div class="toggle-row"><label>Full Height</label><input name="full_height" type="checkbox"></div>
           <div class="toggle-row"><label>Left Handed</label><input name="left_handed" type="checkbox"></div>
           <div class="toggle-row"><label>Legacy Switches</label><input name="legacy_switches" type="checkbox"></div>
+          <details><summary>Hidden card objects</summary><div class="visibility" id="hidden_card_objects"></div></details>
+          <details><summary>Hidden map objects</summary><div class="visibility" id="hidden_objects"></div></details>
+          <details><summary>Map information</summary><div id="map-information"></div></details>
         </div>
       `;
+      for (const field of this.shadowRoot.querySelectorAll("[name]")) {
+        field.id = field.name;
+        field.parentElement.querySelector("label").htmlFor = field.id;
+      }
+      for (const [list, keys] of Object.entries(EDITOR_VISIBILITY)) {
+        const group = this.shadowRoot.getElementById(list);
+        for (const key of keys) {
+          const input = element("input", null, { type: "checkbox", value: key, "data-list": list });
+          const label = element("label");
+          label.append(input, " " + key.replaceAll("_", " "));
+          group.append(label);
+        }
+      }
       this.shadowRoot.addEventListener("change", (e) => this.onChange(e));
     }
   }
@@ -3108,24 +3405,61 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
   setConfig(config) {
     this._config = { ...config };
     if (!this.shadowRoot) return;
-    for (const [key, val] of Object.entries(config)) {
-      const field = this.shadowRoot.querySelector(`[name="${key}"]`);
-      if (!field) continue;
+    const defaults = { mode: "default", map_display: "standard", color_scheme: "dreame_light", icon_set: "dreame", locked: "auto" };
+    for (const field of this.shadowRoot.querySelectorAll("[name]")) {
+      const val = config[field.name] ?? defaults[field.name];
       if (field.type === "checkbox") field.checked = Boolean(val);
       else field.value = val ?? "";
     }
+    for (const field of this.shadowRoot.querySelectorAll("[data-list]")) {
+      field.checked = Array.isArray(config[field.dataset.list]) && config[field.dataset.list].includes(field.value);
+    }
+    this.renderMapInformation();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this.renderMapInformation();
+  }
+
+  renderMapInformation() {
+    const node = this.shadowRoot?.getElementById("map-information");
+    if (!node) return;
+    const hass = this._hass;
+    const config = this._config;
+    const camera = config?.map_camera ?? discoverMapCamera(hass, hass?.entities?.[config?.entity]?.device_id);
+    const state = hass?.states?.[camera];
+    if (!online(state)) {
+      node.textContent = "No live map camera data.";
+      return;
+    }
+    const map = state.attributes ?? {};
+    const objects = [["Rooms", "rooms"], ["Obstacles", "obstacles"], ["Furniture", "furnitures"], ["Carpets", "carpets"],
+      ["No-go areas", "no_go_areas"], ["No-mop areas", "no_mopping_areas"], ["Virtual walls", "virtual_walls"]];
+    node.textContent = [
+      `Floor: ${map.saved_map_id ?? map.map_id ?? "—"}`,
+      `Map: ${map.map_id ?? "—"} · Index: ${map.map_index ?? "—"} · Rotation: ${map.rotation ?? "—"} · Frame: ${map.frame_id ?? "—"}`,
+      ...objects.filter(([, key]) => map[key] && typeof map[key] === "object")
+        .map(([label, key]) => `${label}: ${Object.keys(map[key]).length}`),
+    ].join("\n");
   }
 
   onChange(event) {
     const field = event.target;
-    const name = field.name;
+    const list = field.dataset.list;
+    const name = list ?? field.name;
     if (!name) return;
-    const value = field.type === "checkbox" ? field.checked
+    if (!field.validity.valid) return;
+    const entries = list && Array.isArray(this._config[list]) ? this._config[list] : [];
+    const value = list ? [...new Set([...entries.filter(key => key !== field.value),
+      ...(field.checked ? [field.value] : [])])]
+      : field.type === "checkbox" ? field.checked
       : field.type === "number" ? (field.value === "" ? undefined : field.valueAsNumber)
       : field.value || undefined;
     if (value === undefined) delete this._config[name];
     else this._config[name] = value;
-    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+    this.renderMapInformation();
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
   }
 }
 

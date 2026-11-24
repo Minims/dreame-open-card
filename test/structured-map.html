@@ -46,7 +46,7 @@
           cruising_history_picture: { "Cruise fixture": `/api/camera_history_map_proxy/${camera}?v=1234` },
           virtual_walls: [[450, 250, 450, 650]], no_go_areas: [[200, 300, 300, 400]], no_mopping_areas: [],
           rooms: { 1: { name: "Living room", icon: "mdi:sofa-outline", x0: 150, x1: 400, y0: 250, y1: 650,
-            cleaning_times: 1, suction_level: 2, water_volume: 1, cleaning_mode: 2 },
+             cleaning_times: 1, suction_level: 2, water_volume: 1, cleaning_mode: 2, mop_pressure: "Normal" },
             2: { name: "Kitchen", icon: "mdi:stove", x0: 500, x1: 850, y0: 250, y1: 650,
             cleaning_times: 2, suction_level: 3, water_volume: 2, cleaning_mode: 1 } }, ...restrictions } },
         "script.sweep": { state: "off", attributes: { friendly_name: "Sweep helper" } },
@@ -63,7 +63,7 @@
         switch: { turn_on: {}, turn_off: {} },
         select: { select_option: {} },
         dreame_vacuum: Object.fromEntries(["clean_segment", "clean_spot", "clean_zone", "goto",
-          "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map", "rename_segment"].map(name => [`vacuum_${name}`, {}])),
+          "set_restricted_zone", "remote_control_move_step", "start_shortcut", "select_map", "rename_segment", "set_custom_cleaning"].map(name => [`vacuum_${name}`, {}])),
       },
       callService: async (domain, service, payload, target) => { calls.push({ domain, service, payload, target }); },
     };
@@ -71,6 +71,145 @@
 
   window.fixture = { card, calls, update };
   update();
+
+  if (params.has("regressions")) {
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const failures = [];
+    const check = (ok, message) => { if (!ok) failures.push(message); };
+    const roomMode = () => el("modes").querySelector('[data-mode="room"]').click();
+    const view = label => [...el("menu-items").querySelectorAll("button")]
+      .find(button => button.textContent.trim() === label).click();
+    if (!el("map").complete) await new Promise(resolve => el("map").addEventListener("load", resolve, { once: true }));
+    check(el("map").naturalWidth === 400 && el("map").naturalHeight === 290, "Calibrated fixture must stay 400×290");
+    roomMode();
+    view("Map editing and management");
+    el("room-markers").querySelector('[data-room="1"]').click();
+    const dialog = el("room-dialog");
+    check(dialog.open, "Room dialog must open before testing a floor switch");
+    update(42, 8);
+    check(!dialog.open, "Floor switch must close the stale room dialog");
+    if (dialog.open) {
+      el("room-name-input").value = "Stale name";
+      el("room-name-form").requestSubmit();
+    }
+    check(calls.length === 0, "A stale rename must not send a service call");
+    card.style.maxWidth = "500px";
+    card.setConfig({ ...config, mode: "panel" });
+    update(42, 7, { calibration_points: null });
+    roomMode();
+    check(el("rooms").querySelector("input").getBoundingClientRect().width > 0, "Room fallback must be visible without calibration");
+    update();
+    view("Map editor");
+    check(el("map").getBoundingClientRect().width > 0, "Opening graphical editing must leave the narrow map visible");
+    el("side-panel-back").click();
+    const editor = await card.constructor.getConfigElement();
+    const field = name => editor.shadowRoot.querySelector('[name="' + name + '"]');
+    editor.setConfig({ entity: vacuum, title: "Previous", full_height: true });
+    editor.setConfig({ entity: vacuum });
+    check(field("map_display").value === "standard" && field("color_scheme").value === "dreame_light", "Editor defaults must match actual defaults");
+    check(!field("title").value && !field("full_height").checked, "Removed config keys must reset editor fields");
+    const modeIcon = () => el("modes").querySelector('[data-mode="room"] ha-icon').getAttribute("icon");
+    card.setConfig({ ...config, icon_set: "dreame" });
+    const dreameIcon = modeIcon();
+    card.setConfig({ ...config, icon_set: "material" });
+    check(dreameIcon !== modeIcon(), "Icon sets must change rendered glyphs");
+    let haptics = 0;
+    card.addEventListener("haptic", () => haptics++);
+    card.setConfig({ ...config, disable_haptic: false });
+    roomMode();
+    el("rooms").querySelector("input").click();
+    check(haptics === 1, "Room selection must emit interaction haptic feedback");
+    card.setConfig({ ...config, disable_haptic: true });
+    roomMode();
+    el("rooms").querySelector("input").click();
+    check(haptics === 1, "Disabled interaction haptics must not emit");
+    const layer = el("map-layer");
+    const wheel = () => layer.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }));
+    card.setConfig({ ...config, locked: "always" });
+    check(wheel(), "Always-locked map must let the dashboard scroll at rest");
+    layer.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: 180, clientY: 120 }));
+    check(getComputedStyle(layer).transform !== "none" && !wheel(), "Double click must zoom and unlock the locked map");
+    layer.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    check(getComputedStyle(layer).transform === "none", "Second double click must reset the map");
+    card.setConfig({ ...config, locked: "only_touch", touch_lock: 100 });
+    const dispatchTouch = (name, positions) => layer.dispatchEvent(new TouchEvent(name, {
+      bubbles: true, cancelable: true, touches: positions.map(([x, y], identifier) =>
+        new Touch({ identifier, target: layer, clientX: x, clientY: y })),
+    }));
+    dispatchTouch("touchstart", [[120, 100]]);
+    check(dispatchTouch("touchmove", [[120, 125]]), "Immediate one-finger drag must scroll dashboard");
+    dispatchTouch("touchend", []);
+    dispatchTouch("touchstart", [[120, 100]]);
+    await new Promise(resolve => setTimeout(resolve, 135));
+    check(!dispatchTouch("touchmove", [[120, 125]]), "Held touch must unlock map pan");
+    dispatchTouch("touchend", []);
+    dispatchTouch("touchstart", [[120, 100], [160, 100]]);
+    check(!dispatchTouch("touchmove", [[100, 100], [180, 100]]) && getComputedStyle(layer).transform !== "none", "Pinch must zoom the map");
+    dispatchTouch("touchend", []);
+    card.setConfig({ ...config, hidden_objects: ["ignored_obstacles", "pet"], hidden_card_objects: ["saved_notification"] });
+    update(42, 7, { obstacles: {
+      1: { type: "Cable", x: 250, y: 400, ignore_status: "Manually Ignored" },
+      2: { type: "Animal domestique", x: 300, y: 400 },
+      3: { type: "Shoe", x: 350, y: 400, ignore_status: "Not Ignored" },
+    } });
+    const objects = () => [...el("object-markers").children].map(button => button.dataset.object).join(" ");
+    for (let frame = 0; frame < 180 && el("structured-map").hidden; frame++) await new Promise(requestAnimationFrame);
+    check(objects() === "obstacles:3", "Hidden ignored obstacles and pets must not hide other markers");
+    const quick = label => [...el("quick").querySelectorAll("button")].find(button => button.getAttribute("aria-label") === label);
+    const setMode = mode => el("modes").querySelector('[data-mode="' + mode + '"]').click();
+    check(!quick("Add cleaning area"), "Global mode should not offer a zone");
+    setMode("zone");
+    check(Boolean(quick("Add cleaning area")), "Zone mode should offer an add-area draft action");
+    quick("Add cleaning area")?.click();
+    check(!el("target-task").disabled && calls.length === 0, "Adding a zone must create a draft without starting the robot");
+    const repeat = quick("Repeats");
+    check(Boolean(repeat), "Zone mode should offer task repetitions");
+    repeat?.click();
+    el("target-task").click();
+    check(calls.at(-1)?.payload.repeats === 2, "Zone command must include the chosen repeat count");
+    roomMode();
+    const settings = quick("Custom room cleaning");
+    check(Boolean(settings), "Room mode should offer graphical room cleaning settings");
+    if (settings) {
+      settings.click();
+      const select = el("room-cleaning-settings").querySelector('select[name="suction_level"]');
+      check(select?.value === "2", "Visual room settings must show the existing suction level");
+      check(el("room-cleaning-settings").querySelector('select[name="mop_pressure"]')?.value === "2",
+        "Visual room settings must translate the camera's pressure name to its service code");
+      if (select) select.value = "3";
+      const fields = el("room-cleaning-settings");
+      fields.querySelector('input[type="checkbox"]').click();
+      fields.querySelector('button[type="submit"]').click();
+      await Promise.resolve();
+      check(calls.at(-1)?.payload.segment_id?.join() === "1" && calls.at(-1)?.payload.suction_level?.join() === "3",
+        "Visual settings must write only the chosen room and selected value");
+      check(!el("result").textContent, "Saved-notification option must suppress a successful save message");
+    }
+    editor.hass = card.ha;
+    editor.setConfig({ entity: vacuum, map_camera: camera, hidden_objects: ["pet"] });
+    const toggle = editor.shadowRoot.querySelector('input[data-list="hidden_objects"][value="pet"]');
+    check(toggle?.checked, "Visual editor must reflect configured map visibility");
+    check(editor.shadowRoot.querySelector("#map-information")?.textContent.includes("7"), "Map inspector must show the current floor identity");
+    card.setConfig({ ...config, mode: "default", color_scheme: "mijia_auto" });
+    card.hass = { ...card.ha, themes: { darkMode: true } };
+    check(root.querySelector(".scheme-mijia.scheme-dreame-dark"), "Automatic Mijia theme must follow the frontend mode");
+    update(42, 7, { rooms: {
+      1: { name: "Living room", type: 1, index: 0, x0: 150, x1: 400, y0: 250, y1: 650 },
+      2: { name: "Kitchen", type: 4, index: 0, x0: 500, x1: 850, y0: 250, y1: 650 },
+    } });
+    card.hass = { ...card.ha, services: { ...card.ha.services, dreame_vacuum: {
+      ...card.ha.services.dreame_vacuum, vacuum_set_segment_type: {},
+    } } };
+    roomMode();
+    view("Map editing and management");
+    el("room-markers").querySelector('[data-room="1"]').click();
+    el("room-type-grid").querySelector('[aria-label="Kitchen"]').click();
+    el("room-name-form").requestSubmit();
+    check(calls.at(-1)?.service === "vacuum_set_segment_type" && calls.at(-1)?.payload.map_id === 7
+      && calls.at(-1)?.payload.type["1"].join() === "4,1,0", "Room presets must set the real type on the identified floor with an unused index");
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: review regressions";
+  }
 
   if (params.has("check")) {
     const output = document.querySelector("output");
@@ -264,7 +403,8 @@
       button("modes", "Rooms").click();
       card.setConfig({ ...config, icon_set: "mijia", legacy_switches: true, hidden_card_objects: ["animations"] });
       const bodyEl = card.shadowRoot.querySelector(".body");
-      require(bodyEl.classList.contains("icon-set-mijia"), "icon_set did not apply icon-set class to body");
+      require(button("modes", "Rooms").querySelector("ha-icon").getAttribute("icon") === "mdi:view-dashboard-outline",
+        "Mijia icon set did not change the room mode glyph");
       require(bodyEl.classList.contains("legacy-switches"), "legacy_switches did not apply legacy-switches class to body");
       require(bodyEl.classList.contains("no-animations"), "animations in hidden_card_objects did not apply no-animations class");
       card.setConfig({ ...config, map_config: { map_1: { object_scale: 2, font_size: 8 } } });
@@ -313,6 +453,7 @@
         "Submitting room dialog did not call vacuum_rename_segment with segment_id and name");
       editDetail.open = false;
       const layerEl = el("map-layer");
+      layerEl.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", clientX: 150, clientY: 100 }));
       layerEl.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, cancelable: true, bubbles: true }));
       require(card.mapZoom > 1, "Wheel event on map layer did not zoom in");
       layerEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));

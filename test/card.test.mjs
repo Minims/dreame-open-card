@@ -84,6 +84,13 @@ test("projects a room center onto a rotated image without rounding", async () =>
   assert.deepEqual(roomMarkerPosition(calibration, { x0: 0, y0: 100, x1: 225, y1: 450 }, 100, 100), [0.145, 0.3225]);
 });
 
+test("prefers a room label anchor supplied by the camera", async () => {
+  const { roomMarkerPosition } = await import("../dreame-open-card.js");
+  const bounds = { x0: 0, y0: 100, x1: 225, y1: 450 };
+  assert.deepEqual(roomMarkerPosition(calibration, { ...bounds, x: 0, y: 100 }, 100, 100), [0.18, 0.3]);
+  assert.deepEqual(roomMarkerPosition(calibration, { ...bounds, x: -10000, y: 100 }, 100, 100), [0.145, 0.3225]);
+});
+
 test("omits room markers for invalid bounds, calibration or image size", async () => {
   const { roomMarkerPosition } = await import("../dreame-open-card.js");
   const bounds = { x0: 0, y0: 0, x1: 1000, y1: 1000 };
@@ -105,6 +112,17 @@ test("sends multiple normalized zones in selection order without changing the si
     action: "dreame_vacuum.vacuum_clean_zone", data: { zone: [[1, 2, 8, 9], [-4, -6, -2, 3]] },
   });
   assert.deepEqual(buildCleaningTask("zone", { zones: zones.slice(0, 1) }).data.zone, [1, 2, 8, 9]);
+});
+
+test("keeps explicit task repetitions within the service limit", () => {
+  assert.deepEqual(buildCleaningTask("room", { rooms: [1], repeats: 3 }).data, { segments: [1], repeats: 3 });
+  assert.throws(() => buildCleaningTask("spot", { points: [[1, 2]], repeats: 4 }), /repeats/);
+});
+
+test("validates the full furniture service row and excludes unsupported map_id", () => {
+  const row = [0, 3, 2, 700, 725, 100, 200, 90, 1.25, 1, 0];
+  assert.deepEqual(mapEditPayload("set_furniture", { furnitures: JSON.stringify([row]), map_id: "7", confirm: true }), { furnitures: [row] });
+  assert.throws(() => mapEditPayload("set_furniture", { furnitures: JSON.stringify([row.slice(0, -1)]), confirm: true }), /furnitures/);
 });
 
 test("rejects an entire zone task if one rectangle is invalid", () => {
@@ -342,9 +360,11 @@ test("validates additive panel and map configuration", async () => {
   assert.equal(validateCardConfig({ aspect_ratio: 1.5, full_height: true }), true);
   assert.throws(() => validateCardConfig({ aspect_ratio: 0.05 }), /aspect_ratio/);
   assert.throws(() => validateCardConfig({ aspect_ratio: "1.5" }), /aspect_ratio/);
-  const editor = await DreameOpenCard.getConfigElement();
-  assert.equal(editor.tagName, "DREAME-OPEN-CARD-EDITOR");
   assert.throws(() => validateCardConfig({ full_height: "true" }), /full_height/);
+});
+
+test("uses an existing vacuum for the editor stub when no entity list is passed", () => {
+  assert.deepEqual(DreameOpenCard.getStubConfig({ states: { "light.test": {}, "vacuum.fixture": {} } }), { entity: "vacuum.fixture" });
 });
 
 test("chooses French for Home Assistant's French locales and English otherwise", async () => {
