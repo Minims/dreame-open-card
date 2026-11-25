@@ -51,6 +51,8 @@ const FRENCH = {
   "Close": "Fermer",
   "Cleaning history": "Historique de nettoyage",
   "Cruising history": "Historique des déplacements",
+  "Map and obstacle photos": "Cartes et photos d’obstacles",
+  "Consumable needs attention": "Un consommable nécessite une vérification",
   "Completed": "Terminé",
   "Interrupted": "Interrompu",
   "Session map": "Plan de la session",
@@ -1137,6 +1139,9 @@ const TEMPLATE = `
   #menu { position:absolute; top:11px; right:11px; z-index:2; border:0; padding:0; }
   #menu > summary { display:grid; place-items:center; margin-left:auto; width:36px; height:36px; list-style:none; }
   #menu > summary::-webkit-details-marker { display:none; }
+  #menu [data-alert="true"]::after { content:""; width:8px; height:8px; border-radius:50%; background:#df8b21; }
+  #menu > summary[data-alert="true"]::after { position:absolute; top:2px; right:3px; }
+  #telemetry ha-icon[icon^="mdi:battery-charging"] { color:var(--success-color,#398551); }
   #menu > div { padding:8px; background:var(--card-background-color,#fff); border-radius:12px;
     box-shadow:0 2px 8px #0003; max-width:calc(100vw - 56px); }
   #menu > div:not([hidden]) { display:grid; }
@@ -1327,7 +1332,9 @@ const TEMPLATE = `
   <details id="settings-detail"><summary data-i18n>Settings, dock and maintenance</summary><div id="settings"></div>
       <details hidden><summary data-i18n>Shortcuts</summary><div id="device-shortcuts"></div></details>
     </details>
-  <details id="photos-detail" hidden><summary data-i18n>History and photos</summary><div id="photos"></div></details>
+  <details id="cleaning-history-detail" hidden><summary data-i18n>Cleaning history</summary><div id="cleaning-history"></div></details>
+  <details id="cruising-history-detail" hidden><summary data-i18n>Cruising history</summary><div id="cruising-history"></div></details>
+  <details id="photos-detail" hidden><summary data-i18n>Map and obstacle photos</summary><div id="photos"></div></details>
   <details id="maintenance-detail" hidden><summary data-i18n>Accessory usage</summary><div id="maintenance"></div></details>
   <details id="objects-detail" hidden><summary data-i18n>Map objects</summary><div id="objects"></div></details>
   <details id="editor-detail" hidden><summary data-i18n>Map editor</summary><div id="editor"></div></details>
@@ -1670,6 +1677,17 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       if (online(sensor)) {
         metric[3] = sensor.state;
         metric[4] = sensor.attributes?.unit_of_measurement ?? metric[4];
+      }
+      const reading = Number(metric[3]);
+      if (key === "cleaned_area" && metric[4] === "m²" && this.ha.config?.unit_system?.length === "mi"
+        && /^\d+(?:\.\d+)?$/.test(String(metric[3])) && Number.isFinite(reading)) {
+        metric[3] = Math.round(reading * 10.7639);
+        metric[4] = "ft²";
+      }
+      if (key === "battery" && reading >= 0 && reading <= 100) {
+        const level = Math.floor(reading / 10) * 10;
+        metric[1] = attrs.charging ? (level <= 10 ? "battery-charging-outline" : `battery-charging-${level}`)
+          : level === 100 ? "battery" : level === 0 ? "battery-alert-outline" : `battery-${level}`;
       }
     }
     this.section("telemetry", metrics, (node) => node.replaceChildren(...metrics.flatMap(([label, name, , reading, unit]) => {
@@ -2124,7 +2142,8 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const panels = [["cleaning-detail", "Cleaning settings", "tune-variant"],
       ["room-cleaning-detail", "Custom room cleaning", "tune"],
       ["editor-detail", "Map editor", "map-outline"], ["edit-detail", "Map editing and management", "home-edit"],
-      ["photos-detail", "History and photos", "history"], ["schedule-detail", "Schedules", "calendar-clock"],
+      ["cleaning-history-detail", "Cleaning history", "history"], ["cruising-history-detail", "Cruising history", "map-marker-path"],
+      ["photos-detail", "Map and obstacle photos", "image-outline"], ["schedule-detail", "Schedules", "calendar-clock"],
       ["shortcut-detail", "Shortcuts", "lightning-bolt-outline"],
       ["maintenance-detail", "Accessory usage", "wrench-outline"],
       ["remote-detail", "Step-by-step remote control", "gamepad-variant-outline"], ["settings-detail", "Settings, dock and maintenance", "tune"]]
@@ -2153,7 +2172,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         this.part("floors").hidden = false;
         this.part("floors").querySelector("select")?.focus();
       }, { iconOnly: true });
-      return this.iconButton(label, name, () => this.openView(id), { iconOnly: true });
+      return this.iconButton(label, name, (event) => this.openView(id, event.currentTarget), { iconOnly: true });
     })));
     if (repeats) {
       const button = this.part("quick").children[quick.findIndex(([id]) => id === "repeats")];
@@ -2162,8 +2181,12 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     const locate = basic.find(([action]) => action === "vacuum.locate");
     const refresh = basic.find(([action]) => action === dreame("request_map"));
-    this.section("menu-items", [panels, locate, refresh, floors, available], (node) => {
-      node.replaceChildren(...panels.map(([id, label, name]) => this.iconButton(label, name, () => this.openView(id))));
+    this.section("menu-items", [panels, locate, refresh, floors, available, this.lowConsumable], (node) => {
+      node.replaceChildren(...panels.map(([id, label, name]) => {
+        const button = this.iconButton(label, name, (event) => this.openView(id, event.currentTarget));
+        if (id === "maintenance-detail" && this.lowConsumable) button.dataset.alert = "true";
+        return button;
+      }));
       for (const entry of [locate, refresh].filter(Boolean)) {
         const [action, label] = entry;
         node.append(this.iconButton(label, CONTROL_ICONS[action], () => this.run(action), { disabled: !available }));
@@ -2207,7 +2230,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     return !panel.hidden && (this.sidePanelSource?.panel === panel || panel.open);
   }
 
-  openView(id) {
+  openView(id, trigger) {
     this.part("menu").open = false;
     const panel = this.part(id);
     if (id === "room-cleaning-detail") this.selectMode("room");
@@ -2220,7 +2243,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       this.part("side-panel-title").textContent = title;
       const content = this.part("side-panel-body");
       const children = [...panel.children].filter((c) => c.tagName !== "SUMMARY");
-      this.sidePanelSource = { panel, children };
+      this.sidePanelSource = { panel, children, trigger: trigger?.closest("#menu") ? this.part("menu").querySelector("summary") : trigger };
       content.replaceChildren(...children);
       sidePanel.hidden = false;
       body.classList.add("has-side-panel");
@@ -2241,7 +2264,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     const body = this.shadowRoot.querySelector(".body");
     body.classList.remove("has-side-panel");
     if (this.sidePanelSource) {
-      const { panel, children } = this.sidePanelSource;
+      const { panel, children, trigger } = this.sidePanelSource;
       panel.append(...children);
       this.sidePanelSource = null;
       if (panel.id === "room-cleaning-detail") this.renderRoomPreferences();
@@ -2250,6 +2273,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         if (this.editPickMode) this.cancelRestrictionEdit();
         else this.renderMapObjectLayers();
       }
+      if (trigger?.isConnected && trigger.getClientRects().length) trigger.focus();
     }
   }
 
@@ -2308,6 +2332,11 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   renderMaintenance() {
     const items = this.config.features?.maintenance === false ? [] : maintenanceEntries(this.ha, this.config);
+    this.lowConsumable = items.some(({ percent }) => percent !== null && percent < 30);
+    const menu = this.part("menu").querySelector("summary");
+    if (this.lowConsumable) menu.dataset.alert = "true";
+    else delete menu.dataset.alert;
+    menu.setAttribute("aria-label", this.lowConsumable ? `${this.t("Menu")} · ${this.t("Consumable needs attention")}` : this.t("Menu"));
     this.part("maintenance-detail").hidden = !items.length;
     this.section("maintenance", items, (node) => node.replaceChildren(...items.map(({ name, percent, time }) => {
       const row = element("div", null, { class: "consumable" });
@@ -2317,6 +2346,16 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         class: percent < 30 ? "low" : "", "aria-label": name }));
       return row;
     })));
+  }
+
+  renderHistoryPanel(key, rows, pictures) {
+    const id = key.replaceAll("_", "-");
+    this.part(`${id}-detail`).hidden = !rows.length && !pictures.length;
+    this.section(id, [rows, pictures], node => {
+      node.replaceChildren();
+      this.renderHistory(node, rows);
+      for (const [label, url] of pictures) node.append(element("a", label, { href: url, target: "_blank", rel: "noopener noreferrer" }));
+    });
   }
 
   renderMapObjects(attrs) {
@@ -2737,7 +2776,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       .filter(([id]) => Number.isSafeInteger(id) && id > 0);
     const hasRoomAction = can(dreame("clean_segment"));
     const customCleaning = dreameEntity(this.ha, this.config, deviceEntities(this.ha, this.config), "switch", "customized_cleaning");
-    this.customCleaningEnabled = this.ha.states[customCleaning]?.state === "on";
+    this.customCleaningEnabled = attrs.customized_cleaning === true || this.ha.states[customCleaning]?.state === "on";
     this.roomPreferences = ["idle", "docked"].includes(state) && this.roomFloor != null && can(dreame("set_custom_cleaning"))
       ? selectedRooms.filter(([, room]) => [0, 1, 2, 3].includes(room?.suction_level) && [1, 2, 3].includes(room?.cleaning_times))
       : [];
@@ -2803,32 +2842,32 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       return [id, state, a.friendly_name, a.options, a.unit_of_measurement, a.min, a.max, a.step];
     });
     this.section("settings", [settingsSignature, settingActions], (node) => this.renderSettings(node, ids));
-    this.renderCleaningSettings(ids);
+    const active = attrs.started === true || ["cleaning", "paused", "returning"].includes(state);
+    this.renderCleaningSettings(ids, !available || (active && [attrs.scheduled_clean, attrs.shortcut_task, attrs.cleangenius].includes(true)));
     this.renderMaintenance();
     this.renderMapObjects(map);
     this.renderObjectEditor();
     this.renderSchedulesAndShortcuts(ids, attrs, available);
 
-    const historyTypes = [["cleaning_history", "Cleaning history"]];
-    if (!this.config.hidden_card_objects?.includes("cruising_history")) historyTypes.push(["cruising_history", "Cruising history"]);
-    const history = historyTypes.map(([key, label]) => {
+    const showHistory = this.config.features?.history !== false;
+    for (const key of ["cleaning_history", "cruising_history"]) {
+      if (!showHistory || this.config.hidden_card_objects?.includes(key)) {
+        this.renderHistoryPanel(key, [], []);
+        continue;
+      }
       const id = dreameEntity(this.ha, this.config, ids, "sensor", key);
-      const rows = historyEntries(this.ha.states[id]?.attributes, image ? map[`${key}_picture`] : null, map_camera);
-      return [label, rows];
-    }).filter(([, rows]) => rows.length);
-    const joined = new Set(history.flatMap(([, rows]) => rows.map((row) => row.image)));
-    const pictures = image ? [...historyTypes.map(([key]) => `${key}_picture`), "obstacle_picture"]
-      .flatMap((key) => Object.entries(map[key] ?? {})).filter(([, url]) => localImage(url) && !joined.has(url)) : [];
+      const sessionPictures = image ? map[`${key}_picture`] : null;
+      const rows = historyEntries(this.ha.states[id]?.attributes, sessionPictures, map_camera);
+      const joined = new Set(rows.map(row => row.image));
+      const pictures = Object.entries(sessionPictures ?? {}).filter(([, url]) => localImage(url) && !joined.has(url));
+      this.renderHistoryPanel(key, rows, pictures);
+    }
+    const pictures = image ? Object.entries(map.obstacle_picture ?? {}).filter(([, url]) => localImage(url)) : [];
     const recovery = image ? Object.entries(map.recovery_map_picture ?? {}).filter(([, url]) => localImage(url)) : [];
     const wifi = image && localImage(map.wifi_map_picture);
-    this.part("photos-detail").hidden = this.config.features?.history === false
-      || (!pictures.length && !history.length && !recovery.length && !wifi);
-    this.section("photos", [pictures, history, recovery, wifi], (node) => {
+    this.part("photos-detail").hidden = !showHistory || (!pictures.length && !recovery.length && !wifi);
+    this.section("photos", [pictures, recovery, wifi], (node) => {
       node.replaceChildren();
-      for (const [label, rows] of history) {
-        node.append(element("h3", this.t(label)));
-        this.renderHistory(node, rows);
-      }
       for (const [label, url] of pictures) node.append(element("a", label, { href: url, target: "_blank", rel: "noopener noreferrer" }));
       if (recovery.length) node.append(element("h3", this.t("Recovery maps")));
       for (const [label, url] of [...recovery, ...(wifi ? [[this.t("Wi-Fi map"), wifi]] : [])]) {
@@ -3098,15 +3137,20 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     } catch (error) { this.status(error.message, true); }
   }
 
-  renderCleaningSettings(ids) {
+  renderCleaningSettings(ids, blocked) {
     const detail = this.part("cleaning-detail");
     const container = this.part("cleaning-settings");
     const controls = CLEANING_CONTROLS.map(([key, label, domain, icons]) => {
       const id = dreameEntity(this.ha, this.config, ids, domain, key);
       return id ? { key, label, domain, icons, id, entity: this.ha.states[id] } : null;
     }).filter(Boolean);
-    detail.hidden = !controls.length;
-    if (detail.hidden) return;
+    detail.hidden = blocked || !controls.length;
+    if (detail.hidden) {
+      container.replaceChildren();
+      if (this.sidePanelSource?.panel === detail) this.closeSidePanel();
+      detail.open = false;
+      return;
+    }
     container.replaceChildren();
     for (const { key, label, domain, icons, id, entity } of controls) {
       const a = entity.attributes ?? {};

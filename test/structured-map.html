@@ -126,6 +126,47 @@
     }
   }
 
+  if (params.has("home")) {
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const failures = [];
+    const check = (ok, label) => { if (!ok) failures.push(label); };
+    const menu = label => [...el("menu-items").querySelectorAll("button")].find(button => button.textContent.trim() === label);
+    const hass = card.ha;
+    const robot = hass.states[vacuum];
+    const updateRobot = (state, attrs) => {
+      card.hass = { ...card.ha, states: { ...card.ha.states, [vacuum]: { state, attributes: { ...robot.attributes, ...attrs } } } };
+    };
+    const brush = "sensor.fixture_main_brush_left", history = "sensor.fixture_cleaning_history";
+    card.hass = { ...hass, config: { unit_system: { length: "mi" } }, entities: { ...hass.entities,
+      [brush]: { device_id: "robot", platform: "dreame_vacuum", translation_key: "main_brush_left" },
+      [history]: { device_id: "robot", platform: "dreame_vacuum", translation_key: "cleaning_history" },
+    }, states: { ...hass.states,
+      [brush]: { state: "29", attributes: { unit_of_measurement: "%" } },
+      [history]: { state: "1", attributes: { "Example session": { timestamp: 1234, completed: true } } },
+    } };
+    updateRobot("docked", { cleaned_area: 10, charging: true, battery_level: 20 });
+    check(el("telemetry").textContent.includes("108ft²"), "Imperial dashboard must report cleaned area in square feet");
+    check(el("telemetry").querySelector('[icon="mdi:battery-charging-20"]'), "Charging battery must show its actual level");
+    check(Boolean(menu("Cleaning history")) && Boolean(menu("Cruising history")), "Both supported histories must have separate entries");
+    check(el("menu").querySelector("summary").dataset.alert === "true", "A consumable below 30% must flag the main menu");
+    if (params.has("panel")) {
+      const trigger = el("quick").querySelector('[aria-label="Cleaning settings"]');
+      trigger.focus();
+      trigger.click();
+      el("side-panel-back").click();
+      check(root.activeElement === trigger, "Returning from settings must restore focus to the opening action");
+    }
+    updateRobot("cleaning", { started: true, shortcut_task: true });
+    check(!menu("Cleaning settings"), "An active shortcut must not offer global tuning");
+    updateRobot("cleaning", { started: true, cleangenius: true });
+    check(!menu("Cleaning settings"), "An active CleanGenius task must not offer global tuning");
+    updateRobot("cleaning", { started: true, scheduled_clean: true });
+    check(!menu("Cleaning settings"), "An active scheduled task must not offer global tuning");
+    check(calls.length === 0, "Navigation and telemetry must never send robot actions");
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: home parity";
+  }
+
   if (params.has("regressions")) {
     const root = card.shadowRoot;
     const el = id => root.getElementById(id);
@@ -742,9 +783,9 @@
       card.setConfig({ ...config, scripts, hidden_card_objects: ["shortcuts"] });
       require(shortcutNames("shortcuts").join() === "Quiet helper,Sweep helper"
         && shortcutNames("device-shortcuts").join() === "Kitchen", "Hiding native shortcuts hid scripts or removed device settings");
-      require(el("photos").querySelector("a")?.textContent === "Cruise fixture", "Cruise history fixture was not shown");
+      require(el("cruising-history").querySelector("a")?.textContent === "Cruise fixture", "Cruise history fixture was not shown");
       card.setConfig({ ...config, hidden_card_objects: ["cruising_history"] });
-      require(!el("photos").querySelector("a") && el("photos-detail").hidden, "Cruise history still appears when hidden");
+      require(!el("cruising-history").querySelector("a") && el("cruising-history-detail").hidden, "Cruise history still appears when hidden");
       card.setConfig(config);
       require(!el("state").hidden && !el("modes").hidden && !el("basic").hidden && !el("quick").hidden,
         "Removing visibility settings does not restore the controls");
