@@ -57,6 +57,10 @@ const FRENCH = {
   "Dry": "Séchage",
   "Empty": "Vidage",
   "Dock sections": "Sections de la station",
+  "Active floor": "Étage actif",
+  "Saved map preview": "Aperçu du plan enregistré",
+  "No saved preview for this floor.": "Aucun aperçu enregistré pour cet étage.",
+  "Read-only furniture preview": "Aperçu du mobilier en lecture seule",
   "Completed": "Terminé",
   "Interrupted": "Interrompu",
   "Session map": "Plan de la session",
@@ -743,9 +747,13 @@ export function mapObjectMarkers(attributes, calibration, width, height) {
       addPoint("carpets", String(index), [(rectangle[0] + rectangle[2]) / 2, (rectangle[1] + rectangle[3]) / 2], "Carpet");
     }
   }
-  for (const [index, object] of (attributes?.furnitures ?? attributes?.furniture ?? []).entries()) {
-    if ([object?.x0, object?.y0, object?.x1, object?.y1].every(Number.isSafeInteger)) {
-      addPoint("furniture", String(index), [(object.x0 + object.x1) / 2, (object.y0 + object.y1) / 2], object.type ?? "Furniture");
+  const furniture = attributes?.furnitures ?? attributes?.furniture;
+  for (const [index, object] of (Array.isArray(furniture) ? furniture : []).entries()) {
+    const center = [object?.x, object?.y];
+    const bounds = [object?.x0, object?.y0, object?.x1, object?.y1];
+    if (center.every(Number.isSafeInteger)) addPoint("furniture", String(index), center, object.type ?? "Furniture");
+    else if (bounds.every(Number.isSafeInteger)) {
+      addPoint("furniture", String(index), [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2], object.type ?? "Furniture");
     }
   }
   return markers;
@@ -1121,7 +1129,7 @@ const TEMPLATE = `
   .stage { display:grid; grid-template-columns:40px minmax(0,1fr) 40px; align-items:end; gap:6px; }
   .stage:has(figure[hidden]):has(#quick:is(:empty,[hidden])) { display:none; }
   .has-side-panel #quick, .has-side-panel #modes, .has-side-panel #basic, .has-side-panel #menu { display:none !important; }
-  .has-side-panel:not(:has(#side-panel :is(#editor,#room-cleaning-settings))) figure { display:none; }
+  .has-side-panel:not(:has(#side-panel :is(#editor,#edit,#room-cleaning-settings))) figure { display:none; }
   .has-side-panel .stage { display:block; }
   #side-panel { display:flex; flex-direction:column; max-height:70vh; overflow-y:auto; padding:10px 14px;
     background:var(--card-background-color,#fff); border-radius:12px; box-shadow:0 1px 4px #0002; z-index:2; box-sizing:border-box; }
@@ -1306,6 +1314,7 @@ const TEMPLATE = `
   #map-objects polygon, #map-objects line { vector-effect:non-scaling-stroke; }
   #map-objects .wall { stroke:var(--map-virtual-wall,#0b8fe3); stroke-width:4; }
   #map-objects .physical-wall { stroke:var(--map-wall,#47566a); stroke-width:3; opacity:var(--map-opacity,1); }
+  #map-objects .furniture-preview { stroke:var(--accent); stroke-width:2px; vector-effect:non-scaling-stroke; fill:#00a1c424; }
   .scheme-dreame-dark #map-objects .physical-wall { stroke:var(--map-wall,#96a6bb); }
   #map-objects .threshold { stroke:#8c6b2f; stroke-width:3; stroke-dasharray:5 3; }
   #map-objects .door { stroke:#b65b52; stroke-width:2; stroke-linecap:round; }
@@ -1860,6 +1869,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         this.objectSelection = marker;
         for (const sibling of node.children) sibling.setAttribute("aria-pressed", String(sibling === button));
         this.renderObjectEditor();
+        this.renderMapObjectLayers();
       });
       if (obstacle) {
         button.setAttribute("aria-label", marker.label);
@@ -1975,6 +1985,11 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
       .filter(({ field }) => this.viewOpen("editor-detail") || !hidden.has(field === "zones" ? "no_go" : "no_mop"))
       .flatMap(({ field, attr }) => rectangles(attrs[attr], field === "no_mops" ? "restricted mop" : "restricted", field));
     if (!hidden.has("carpet")) polygons.push(...rectangles(attrs.carpets, "carpet"));
+    if (this.objectSelection?.kind === "furniture" && !hidden.has("furniture")) {
+      const furniture = (attrs.furnitures ?? attrs.furniture)?.[this.objectSelection.key];
+      const points = furnitureCorners(furniture).map(project);
+      if (points.length && points.every(Boolean)) polygons.push({ className: "furniture-preview", points });
+    }
     if (this.editPickMode && this.picks.length === 2) {
       const draft = mapArea(...this.picks.map(({ coords }) => coords));
       polygons.push(...rectangles([draft], this.editPickMode === "no_mops" ? "restricted mop draft" : "restricted draft"));
@@ -2018,6 +2033,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     editor.replaceChildren();
     if (this.objectSelection) {
       editor.append(element("p", `${this.t("Map objects")}: ${this.objectSelection.label}`));
+      if (this.objectSelection.kind === "furniture") editor.append(element("p", this.t("Read-only furniture preview")));
     }
     if (!canRestricted) return;
     const snapshot = this.restrictions;
@@ -2135,6 +2151,67 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     this.part("floor-warning").textContent = label;
     dialog.returnValue = "";
     dialog.showModal();
+  }
+
+  renderFloors(maps, activeMapId, deviceId, available) {
+    const canSelect = hasAction(this.ha, dreame("select_map"));
+    const canRename = this.config.features?.editing !== false && hasAction(this.ha, dreame("rename_map"));
+    const canWrite = available && !this.pendingFloor && !this.pendingRestriction;
+    const previews = savedFloorPreviews(this.ha, deviceId);
+    const current = String(activeMapId);
+    const sorted = [...maps].sort((a, b) => Number(String(b.id) === current) - Number(String(a.id) === current));
+    this.section("floors", [this.config.entity, sorted, current, canWrite, canSelect, canRename, [...previews]], node => {
+      const previous = node.querySelector("select")?.value;
+      node.replaceChildren();
+      if (!sorted.length || (!canSelect && !canRename && !previews.size)) {
+        node.hidden = true;
+        return;
+      }
+      const select = element("select");
+      const placeholder = element("option", this.t("Choose a floor"), { value: "" });
+      placeholder.disabled = true;
+      select.append(placeholder, ...sorted.map(({ id, name }) => {
+        const label = name || `${this.t("Map")} ${id}`;
+        return element("option", String(id) === current ? `${label} · ${this.t("Active floor")}` : label, { value: id });
+      }));
+      select.value = sorted.some(entry => String(entry.id) === previous) ? previous
+        : sorted.some(entry => String(entry.id) === current) ? current : "";
+      node.append(this.label(this.t("Floor"), select));
+      if (canSelect) node.append(this.button(this.t("Switch floor"), () => {
+        if (select.value) void this.requestFloorChange(Number(select.value), activeMapId, select.selectedOptions[0]?.textContent);
+      }, !canWrite));
+      const preview = element("div", null, { class: "floor-preview" });
+      const showPreview = () => {
+        const url = previews.get(select.value);
+        preview.replaceChildren(url
+          ? element("img", null, { src: url, alt: this.t("Saved map preview"), loading: "lazy", referrerpolicy: "no-referrer" })
+          : element("p", this.t("No saved preview for this floor.")));
+      };
+      select.addEventListener("change", showPreview);
+      showPreview();
+      node.append(preview);
+      if (canRename) node.append(this.floorRenameForm(select, canWrite));
+    });
+  }
+
+  floorRenameForm(select, canWrite) {
+    const form = element("form");
+    const input = element("input", null, { name: "map_name", maxlength: 64, required: true });
+    const action = dreame("rename_map");
+    const button = element("button", this.t("Rename a floor"), { type: "submit" });
+    input.disabled = button.disabled = !canWrite;
+    const robot = this.config.entity;
+    form.append(this.label(this.t("New name"), input), button);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const id = Number(select.value);
+      const name = input.value.trim();
+      const maps = this.ha.states[robot]?.attributes?.maps;
+      if (!canWrite || !form.isConnected || robot !== this.config.entity || this.pendingFloor || this.pendingRestriction
+        || !name || name.length > 64 || !Array.isArray(maps) || !maps.some(map => Number(map?.id) === id)) return;
+      if (await this.run(action, { map_id: id, map_name: name })) input.value = "";
+    });
+    return form;
   }
 
   confirmFloorChange() {
@@ -2812,22 +2889,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     });
 
     const maps = Array.isArray(attrs.maps) ? attrs.maps.filter((entry) => Number.isSafeInteger(Number(entry?.id)) && Number(entry.id) > 0) : [];
-    const canSwitchFloor = available && !this.pendingFloor && !this.pendingRestriction;
-    this.section("floors", [maps, activeMapId, canSwitchFloor, can(dreame("select_map"))], (node) => {
-      node.replaceChildren();
-      node.hidden = true;
-      if (!maps.length || !can(dreame("select_map"))) return;
-      const select = element("select");
-      const placeholder = element("option", this.t("Choose a floor"), { value: "" });
-      placeholder.disabled = true;
-      select.append(placeholder, ...maps.map(({ id, name }) => element("option", name || this.t("Map") + " " + id, { value: id })));
-      select.value = maps.some((entry) => String(entry.id) === String(activeMapId)) ? String(activeMapId) : "";
-      select.disabled = !canSwitchFloor;
-      const button = this.button(this.t("Switch floor"), () => {
-        if (select.value) void this.requestFloorChange(Number(select.value), activeMapId, select.selectedOptions[0]?.textContent);
-      }, !canSwitchFloor);
-      node.append(this.label(this.t("Floor"), select), button);
-    });
+    this.renderFloors(maps, activeMapId, robotDevice, available);
 
     const cameraRooms = liveMap ? map.rooms : null;
     const selectedRooms = Object.entries(
@@ -3423,6 +3485,35 @@ function discoverMapCamera(hass, deviceId) {
   return matches.length === 1 ? matches[0][0] : null;
 }
 
+function savedFloorPreviews(hass, deviceId) {
+  const previews = new Map();
+  if (!deviceId) return previews;
+  for (const [id, entry] of Object.entries(hass.entities ?? {})) {
+    if (!/^camera\.[a-z0-9_]+$/.test(id) || entry?.device_id !== deviceId || entry.platform !== DOMAIN
+      || entry.translation_key !== "saved_map") continue;
+    const state = hass.states[id];
+    if (!online(state)) continue;
+    const attrs = state.attributes ?? {};
+    const floor = Number(attrs.saved_map_id ?? attrs.map_id);
+    const url = localImage(attrs.entity_picture);
+    if (!Number.isSafeInteger(floor) || floor < 1 || url?.split("?", 1)[0] !== `/api/camera_proxy/${id}`) continue;
+    const key = String(floor);
+    previews.set(key, previews.has(key) ? null : url);
+  }
+  return previews;
+}
+
+function furnitureCorners(furniture) {
+  const { x, y, width, height, angle = 0 } = furniture ?? {};
+  if (![x, y, width, height, angle].every(Number.isFinite) || width <= 0 || height <= 0) return [];
+  const radians = -(angle % 360) * Math.PI / 180;
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sideX, sideY]) => {
+    const dx = sideX * width / 2, dy = sideY * height / 2;
+    return [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+  });
+}
+
 const EDITOR_VISIBILITY = {
   hidden_card_objects: ["title", "state", "status", "menu", "controls", "task_type", "action_buttons", "animations",
     "shortcuts", "cruising_history", "saved_notification", "map_change_confirmation"],
@@ -3445,10 +3536,15 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
           .toggle-row { display:flex; align-items:center; justify-content:space-between; }
           .visibility { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:5px; padding:8px 0; }
           #map-information { white-space:pre-line; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
+          #map-inspector img { display:block; max-width:100%; max-height:230px; height:auto; margin:8px auto; }
+          #map-inspector img[hidden] { display:none; }
+          #floor-options { display:grid; gap:6px; padding:8px 0; }
         </style>
         <div class="form">
-          <div class="row"><label>Entity</label><input name="entity" pattern="vacuum\\.[a-z0-9_]+" placeholder="vacuum.robot" required></div>
-          <div class="row"><label>Map camera</label><input name="map_camera" pattern="camera\\.[a-z0-9_]+" placeholder="Automatic"></div>
+          <div class="row"><label>Entity</label><input name="entity" list="vacuum-entities" pattern="vacuum\\.[a-z0-9_]+" placeholder="vacuum.robot" required></div>
+          <datalist id="vacuum-entities"></datalist>
+          <div class="row"><label>Map camera</label><input name="map_camera" list="camera-entities" pattern="camera\\.[a-z0-9_]+" placeholder="Automatic"></div>
+          <datalist id="camera-entities"></datalist>
           <div class="row"><label>Title</label><input name="title" placeholder="Optional custom title"></div>
           <div class="row"><label>Mode</label>
             <select name="mode"><option value="default">Default</option><option value="panel">Panel</option></select>
@@ -3497,7 +3593,23 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
           <div class="toggle-row"><label>Legacy Switches</label><input name="legacy_switches" type="checkbox"></div>
           <details><summary>Hidden card objects</summary><div class="visibility" id="hidden_card_objects"></div></details>
           <details><summary>Hidden map objects</summary><div class="visibility" id="hidden_objects"></div></details>
-          <details><summary>Map information</summary><div id="map-information"></div></details>
+          <details><summary>Saved-floor options</summary><div id="floor-options">
+            <label for="floor-options-index">Saved-map index</label><select id="floor-options-index"></select>
+            <label for="floor-options-rotation">Rotation</label>
+            <select id="floor-options-rotation" data-floor-field="rotation">
+              <option value="">Automatic</option><option>0</option><option>90</option><option>180</option><option>270</option>
+            </select>
+            <label for="floor-options-width">Viewport width</label>
+            <input id="floor-options-width" type="number" min="0.0001" step="any" data-floor-field="width">
+            <label for="floor-options-height">Viewport height</label>
+            <input id="floor-options-height" type="number" min="0.0001" step="any" data-floor-field="height">
+            <label for="floor-options-opacity">Map opacity</label>
+            <input id="floor-options-opacity" type="number" min="0" max="1" step="any" data-floor-field="opacity">
+          </div></details>
+          <details id="map-inspector"><summary>Map information</summary><div id="map-information"></div>
+            <img id="inspector-image" alt="Read-only camera map" loading="lazy" referrerpolicy="no-referrer" hidden>
+            <output id="map-dimensions"></output>
+          </details>
         </div>
       `;
       for (const field of this.shadowRoot.querySelectorAll("[name]")) {
@@ -3513,6 +3625,13 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
           group.append(label);
         }
       }
+      const image = this.shadowRoot.getElementById("inspector-image");
+      image.addEventListener("load", () => {
+        this.shadowRoot.getElementById("map-dimensions").textContent = `${image.naturalWidth} × ${image.naturalHeight} px`;
+      });
+      image.addEventListener("error", () => {
+        this.shadowRoot.getElementById("map-dimensions").textContent = "Map image not available.";
+      });
       this.shadowRoot.addEventListener("change", (e) => this.onChange(e));
     }
   }
@@ -3529,12 +3648,71 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
     for (const field of this.shadowRoot.querySelectorAll("[data-list]")) {
       field.checked = Array.isArray(config[field.dataset.list]) && config[field.dataset.list].includes(field.value);
     }
+    this.refreshEditorDevices();
+    this.fillFloorOptions();
     this.renderMapInformation();
   }
 
   set hass(hass) {
     this._hass = hass;
+    this.refreshEditorDevices();
     this.renderMapInformation();
+  }
+
+  refreshEditorDevices() {
+    const root = this.shadowRoot;
+    if (!root) return;
+    const hass = this._hass;
+    const vacuum = this._config?.entity;
+    const deviceId = hass?.entities?.[vacuum]?.device_id;
+    const states = hass?.states ?? {};
+    const vacuums = Object.keys(states).filter(id => /^vacuum\.[a-z0-9_]+$/.test(id));
+    const cameras = Object.entries(hass?.entities ?? {}).filter(([id, entity]) =>
+      /^camera\.[a-z0-9_]+$/.test(id) && entity?.platform === DOMAIN && entity.translation_key === "map"
+      && (!deviceId || entity.device_id === deviceId)).map(([id]) => id);
+    for (const [id, options] of [["vacuum-entities", vacuums], ["camera-entities", cameras]]) {
+      const list = root.getElementById(id);
+      if ([...list.options].map(option => option.value).join() !== options.join()) {
+        list.replaceChildren(...options.map(value => element("option", null, { value })));
+      }
+    }
+    this.refreshFloorOptions(states[vacuum]?.attributes?.maps);
+  }
+
+  refreshFloorOptions(maps) {
+    const root = this.shadowRoot;
+    const select = root.getElementById("floor-options-index");
+    const previous = select.value;
+    const configured = Object.keys(this._config?.map_config ?? {}).filter(key => /^map_[1-9]\d*$/.test(key));
+    const indexes = new Set([1, ...configured.map(key => Number(key.slice(4)))]);
+    for (const map of Array.isArray(maps) ? maps : []) {
+      const index = Number(map?.index);
+      if (Number.isSafeInteger(index) && index > 0) indexes.add(index);
+    }
+    const sorted = [...indexes].sort((a, b) => a - b).map(String);
+    if ([...select.options].map(option => option.value).join() !== sorted.join()) {
+      select.replaceChildren(...sorted.map(index => element("option", index, { value: index })));
+      select.value = sorted.includes(previous) ? previous : sorted[0];
+    }
+  }
+
+  fillFloorOptions() {
+    const root = this.shadowRoot;
+    const floor = this._config?.map_config?.[`map_${root.getElementById("floor-options-index").value}`];
+    for (const field of root.querySelectorAll("[data-floor-field]")) field.value = floor?.[field.dataset.floorField] ?? "";
+  }
+
+  changeFloorOption(field) {
+    const key = `map_${this.shadowRoot.getElementById("floor-options-index").value}`;
+    const maps = { ...this._config.map_config };
+    const floor = { ...maps[key] };
+    if (field.value === "") delete floor[field.dataset.floorField];
+    else floor[field.dataset.floorField] = Number(field.value);
+    if (Object.keys(floor).length) maps[key] = floor;
+    else delete maps[key];
+    if (Object.keys(maps).length) this._config.map_config = maps;
+    else delete this._config.map_config;
+    this.emitConfigChange();
   }
 
   renderMapInformation() {
@@ -3544,6 +3722,18 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
     const config = this._config;
     const camera = config?.map_camera ?? discoverMapCamera(hass, hass?.entities?.[config?.entity]?.device_id);
     const state = hass?.states?.[camera];
+    const image = this.shadowRoot.getElementById("inspector-image");
+    const url = online(state) ? localImage(state.attributes?.entity_picture) : null;
+    const matchingImage = url?.split("?", 1)[0] === `/api/camera_proxy/${camera}`;
+    if (!matchingImage) {
+      image.hidden = true;
+      image.removeAttribute("src");
+      this.shadowRoot.getElementById("map-dimensions").textContent = "";
+    } else if (image.getAttribute("src") !== url) {
+      this.shadowRoot.getElementById("map-dimensions").textContent = "";
+      image.hidden = false;
+      image.setAttribute("src", url);
+    }
     if (!online(state)) {
       node.textContent = "No live map camera data.";
       return;
@@ -3561,6 +3751,8 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
 
   onChange(event) {
     const field = event.target;
+    if (field.id === "floor-options-index") return this.fillFloorOptions();
+    if (field.dataset.floorField && field.validity.valid) return this.changeFloorOption(field);
     const list = field.dataset.list;
     const name = list ?? field.name;
     if (!name) return;
@@ -3573,7 +3765,15 @@ export class DreameOpenCardEditor extends (globalThis.HTMLElement ?? class {}) {
       : field.value || undefined;
     if (value === undefined) delete this._config[name];
     else this._config[name] = value;
+    if (name === "entity") {
+      this.refreshEditorDevices();
+      this.fillFloorOptions();
+    }
     this.renderMapInformation();
+    this.emitConfigChange();
+  }
+
+  emitConfigChange() {
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: { ...this._config } }, bubbles: true, composed: true }));
   }
 }

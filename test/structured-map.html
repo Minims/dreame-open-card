@@ -267,6 +267,83 @@
     document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: settings parity";
   }
 
+  if (params.has("maps")) {
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const failures = [];
+    const check = (ok, label) => { if (!ok) failures.push(label); };
+    const hass = card.ha, bot = hass.states[vacuum];
+    const upstairs = "camera.fixture_saved_upstairs", downWrong = "camera.unrelated";
+    const image = id => `/api/camera_proxy/${id}?v=17`;
+    card.hass = { ...hass, entities: { ...hass.entities,
+      [upstairs]: { device_id: "robot", platform: "dreame_vacuum", translation_key: "saved_map" },
+      [downWrong]: { device_id: "other", platform: "dreame_vacuum", translation_key: "saved_map" },
+    }, states: { ...hass.states,
+      [vacuum]: { ...bot, attributes: { ...bot.attributes, maps: [{ id: 8, name: "Upstairs" }, { id: 7, name: "Downstairs" }] } },
+      [upstairs]: { state: "idle", attributes: { saved_map_id: 8, entity_picture: image(upstairs) } },
+      [downWrong]: { state: "idle", attributes: { saved_map_id: 7, entity_picture: image(downWrong) } },
+    }, services: { ...hass.services, dreame_vacuum: { ...hass.services.dreame_vacuum, vacuum_rename_map: {} } } };
+    const floorControl = el("floors").querySelector("select");
+    check(floorControl.options[1]?.value === "7" && /Active/.test(floorControl.options[1]?.textContent), "Current floor must be pinned and labeled");
+    check(!el("floors").querySelector("img"), "The preview must not use a saved map from another device");
+    const initial = el("map").getAttribute("src");
+    floorControl.value = "8";
+    floorControl.dispatchEvent(new Event("change"));
+    check(el("floors").querySelector("img")?.getAttribute("src") === image(upstairs), "Choosing a floor should preview its matching saved map");
+    check(el("map").getAttribute("src") === initial && calls.length === 0, "Choosing a preview must not change the live map or send a service call");
+    const rename = el("floors").querySelector('input[name="map_name"]');
+    if (rename) {
+      rename.value = "Second floor";
+      rename.form.requestSubmit();
+    }
+    check(calls.at(-1)?.service === "vacuum_rename_map" && calls.at(-1)?.payload.map_id === 8
+      && calls.at(-1)?.payload.map_name === "Second floor", "Renaming must target the explicitly selected floor");
+    update(42, 7, { furnitures: [{ x: 680, y: 500, width: 100, height: 120, angle: 90, type: "Table" }] });
+    if (!el("map").complete) await new Promise(resolve => el("map").addEventListener("load", resolve, { once: true }));
+    const beforePreview = calls.length;
+    el("object-markers").querySelector('[data-object="furniture:0"]')?.click();
+    check(el("map-objects").querySelector("polygon.furniture-preview")?.getAttribute("points").split(" ").length === 4,
+      "Selected furniture must show its projected outline");
+    check(el("editor").textContent.includes("Read-only") && calls.length === beforePreview,
+      "Furniture inspection must be read-only");
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: map management";
+  }
+
+  if (params.has("editor")) {
+    const editor = await card.constructor.getConfigElement();
+    document.body.append(editor);
+    const root = editor.shadowRoot;
+    const get = id => root.getElementById(id);
+    const inputConfig = { ...config, map_config: { map_1: { rotation: 90, hidden_objects: ["path"] }, map_2: { opacity: .6 } },
+      override_colors: { wall: "#f00" } };
+    editor.hass = card.ha;
+    editor.setConfig(inputConfig);
+    const failures = [];
+    const check = (ok, label) => { if (!ok) failures.push(label); };
+    check(get("vacuum-entities")?.querySelector('option[value="vacuum.fixture"]'), "Visual editor must suggest registered vacuum entities");
+    check(get("camera-entities")?.querySelector('option[value="camera.fixture_map"]'), "Visual editor must suggest live cameras");
+    const rotation = root.querySelector('[data-floor-field="rotation"]');
+    check(rotation?.value === "90", "Floor editor must show the stored rotation");
+    let emitted;
+    editor.addEventListener("config-changed", event => { emitted = event.detail.config; });
+    if (rotation) {
+      rotation.value = "180";
+      rotation.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    check(emitted?.map_config.map_1.rotation === 180 && emitted?.map_config.map_1.hidden_objects.join() === "path"
+      && emitted?.map_config.map_2.opacity === .6 && emitted?.override_colors.wall === "#f00" && inputConfig.map_config.map_1.rotation === 90,
+    "Editing one floor field must preserve other floors, YAML keys and the input object");
+    const inspect = get("map-inspector");
+    if (inspect) inspect.open = true;
+    for (let frame = 0; frame < 180 && !get("map-dimensions")?.textContent.includes("400"); frame++) {
+      await new Promise(requestAnimationFrame);
+    }
+    check(get("map-dimensions")?.textContent.includes("400 × 290"), "The inspector must measure the actual map image");
+    check(calls.length === 0, "The configuration preview must not call the robot");
+    editor.remove();
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: visual editor";
+  }
+
   if (params.has("regressions")) {
     const root = card.shadowRoot;
     const el = id => root.getElementById(id);
