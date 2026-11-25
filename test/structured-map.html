@@ -167,6 +167,106 @@
     document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: home parity";
   }
 
+  if (params.has("yaml")) {
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const configExample = {
+      ...config, title: "First floor robot", aspect_ratio: 1.5, full_height: true,
+      color_scheme: "dreame_dark", icon_set: "dreame", map_display: "floor_plan", locked: "only_touch",
+      touch_lock: 200, disable_haptic: true, left_handed: true, legacy_switches: true,
+      scripts: ["script.sweep", "script.quiet"],
+      map_config: {
+        map_1: {
+          object_scale: 7, width: 250, height: 183, opacity: .45,
+          hidden_objects: ["customized_cleaning", "floor", "name", "name_background", "no_go", "no_mop", "order", "walls"],
+          background_image: { url: "/local/floor.png", left: 77, top: 10.3, width: 250, height: 183, opacity: .75 },
+          overlay_image: { url: "/local/upper-walls.png", opacity: .9 },
+        },
+        map_2: { rotation: 180, opacity: .8 },
+      },
+      hidden_card_objects: ["title", "state", "status", "animations", "shortcuts", "cruising_history", "saved_notification", "map_change_confirmation"],
+      hidden_objects: ["floor", "obstacle", "obstacle_background", "ignored_obstacles", "furniture_image", "path", "pet"],
+      override_colors: { floor: "#666", wall: "#444", path: "#ccc", active_area: "#789", no_go: "#900",
+        no_mop: "#909", virtual_wall: "#900", carpet: "#315", icon_background: "#222", text: "#ddd",
+        segment: [["#246", "#38f"], ["#832", "#e83"], ["#458", "#2bf"], ["#583", "#6a3"]],
+        dark: { floor: "#222", wall: "#333", path: "#fff", active_area: "#36d", no_go: "#c00",
+          no_mop: "#606", icon_background: "#333", text: "#fff" } },
+    };
+    const setIndex = (selectedIndex, mapList = [{ id: 7, index: 1 }, { id: 8, index: 2 }]) => {
+      const hass = card.ha, bot = hass.states[vacuum];
+      card.hass = { ...hass, states: { ...hass.states, [vacuum]: { ...bot,
+        attributes: { ...bot.attributes, selected_map_index: selectedIndex, maps: mapList } },
+      } };
+    };
+    const failures = [];
+    const check = (ok, message) => { if (!ok) failures.push(message); };
+    card.setConfig(configExample);
+    setIndex(1);
+    for (let frame = 0; frame < 180 && el("structured-map").hidden; frame++) await new Promise(requestAnimationFrame);
+    const layer = el("map-layer"), figure = el("figure");
+    check(el("title").hidden && el("state").hidden && el("telemetry").hidden, "Combined visibility options must hide all three header elements");
+    check(el("cruising-history-detail").hidden && el("shortcuts").querySelectorAll("button").length === 2, "Configured scripts must survive hiding native shortcuts and cruise history");
+    check(figure.classList.contains("map-fit") && figure.classList.contains("ratio-frame"), "Map 1 dimensions must coexist with the aspect-ratio frame");
+    check(el("structured-map").style.opacity === "0.45" && layer.style.getPropertyValue("--map-object-scale") === "7", "Map 1 must use robot-selected map index, not map ID");
+    check(!el("map-background").hidden && !el("map-foreground").hidden && el("map-background").style.opacity === "0.75", "Map 1 art must mount with its configured opacity");
+    check(!el("map-objects").querySelector("line.physical-wall, polygon.restricted"), "Map 1 must hide physical walls and restrictions");
+    const first = el("map").getBoundingClientRect();
+    for (let refresh = 0; refresh < 5; refresh++) setIndex(1);
+    const next = el("map").getBoundingClientRect();
+    check(Math.abs(first.width - next.width) < 1 && Math.abs(first.height - next.height) < 1, "Identical updates must not change the map dimensions");
+    update(42, 8);
+    setIndex(undefined);
+    check(layer.style.getPropertyValue("--map-opacity") === "0.8" && card.mapRotation === 180, "Map 2 must use the active floor entry index on camera fallback");
+    card.setConfig(config);
+    check(!el("title").hidden && !el("state").hidden && !el("telemetry").hidden && card.mapRotation === 0
+      && el("map-background").hidden && el("map-foreground").hidden && layer.style.getPropertyValue("--map-opacity") === "1",
+    "Removing combined YAML options must clear the previous styling");
+    check(calls.length === 0, "Loading the complete YAML must not send any commands");
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: combined YAML";
+  }
+
+  if (params.has("settings")) {
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const failures = [];
+    const check = (ok, label) => { if (!ok) failures.push(label); };
+    const wash = "button.fixture_self_clean", dry = "button.fixture_manual_drying", empty = "button.fixture_start_auto_empty";
+    const dryTime = "select.fixture_drying_time";
+    const hass = card.ha;
+    const washState = { state: "unknown", attributes: {} };
+    card.hass = { ...hass, states: { ...hass.states, [wash]: washState, [dry]: washState, [empty]: washState,
+      [dryTime]: { state: "2h", attributes: { options: ["2h", "3h"] } } },
+    entities: { ...hass.entities, ...Object.fromEntries([
+      [wash, "self_clean"], [dry, "manual_drying"], [empty, "start_auto_empty"], [dryTime, "drying_time"],
+    ].map(([id, key]) => [id, { device_id: "robot", platform: "dreame_vacuum", translation_key: key }])) },
+    services: { ...hass.services, button: { press: {} } } };
+    const openDock = () => [...el("basic").querySelectorAll("button")].find(button => button.textContent.includes("Dock controls")).click();
+    openDock();
+    const tabs = el("dock-content").querySelectorAll("[data-dock-tab]");
+    check([...tabs].map(tab => tab.dataset.dockTab).join() === "wash,dry,empty", "Dock must split wash, dry and empty controls");
+    tabs[1]?.click();
+    check(el("dock-content").querySelector("select")?.value === "2h", "Drying tab must show its device-provided setting");
+    const settings = el("dock-content").querySelector("select");
+    if (settings) {
+      settings.value = "3h";
+      settings.dispatchEvent(new Event("change"));
+      check(calls.at(-1)?.target.entity_id === dryTime && calls.at(-1)?.payload.option === "3h", "Dock setting must target its own entity");
+    }
+    el("dock-dialog").close();
+    openDock();
+    check(el("dock-content").querySelector('[data-dock-tab="dry"]')?.getAttribute("aria-pressed") === "true", "Dock must remember the last tab on reopen");
+    el("dock-dialog").close();
+    el("quick").querySelector('[aria-label="Cleaning settings"]').click();
+    const suction = el("cleaning-settings").querySelector('[aria-label="Suction level"] button');
+    suction.focus();
+    const stableHass = card.ha, bot = stableHass.states[vacuum];
+    card.hass = { ...stableHass, states: { ...stableHass.states, [vacuum]: { ...bot,
+      attributes: { ...bot.attributes, battery_level: 81 },
+    } } };
+    check(root.activeElement === suction && suction.isConnected, "Unrelated telemetry refresh must not replace the focused cleaning control");
+    document.querySelector("output").value = failures.length ? `FAIL: ${failures.join("; ")}` : "PASS: settings parity";
+  }
+
   if (params.has("regressions")) {
     const root = card.shadowRoot;
     const el = id => root.getElementById(id);

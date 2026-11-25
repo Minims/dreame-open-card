@@ -53,6 +53,10 @@ const FRENCH = {
   "Cruising history": "Historique des déplacements",
   "Map and obstacle photos": "Cartes et photos d’obstacles",
   "Consumable needs attention": "Un consommable nécessite une vérification",
+  "Wash": "Lavage",
+  "Dry": "Séchage",
+  "Empty": "Vidage",
+  "Dock sections": "Sections de la station",
   "Completed": "Terminé",
   "Interrupted": "Interrompu",
   "Session map": "Plan de la session",
@@ -347,6 +351,20 @@ function mapPresentation(config, index) {
   return { ...floor, hidden_objects: floor?.hidden_objects ?? config.hidden_objects };
 }
 
+function activeMapIndex(map, attrs, liveMap, cameraMapId) {
+  const cameraIndex = Number(map.map_index);
+  if (Number.isSafeInteger(cameraIndex) && cameraIndex > 0) return cameraIndex;
+  const maps = Array.isArray(attrs.maps) ? attrs.maps : [];
+  if (liveMap && cameraMapId != null && String(cameraMapId) === String(attrs.selected_map_id)) {
+    const floor = maps.find(entry => String(entry?.id) === String(cameraMapId));
+    for (const value of [attrs.selected_map_index, floor?.index]) {
+      const index = Number(value);
+      if (Number.isSafeInteger(index) && index > 0) return index;
+    }
+  }
+  return maps.length <= 1 ? 1 : null;
+}
+
 function paintedRoomColor(room, palette, placement) {
   const pairs = placement.colors.segment;
   if (!pairs?.length) return roomColor(room, palette);
@@ -590,6 +608,12 @@ const DOCK_ACTIONS = [
   ["manual_dust_bag_drying", "Dry dust bag", "fire"], ["start_auto_empty", "Empty dust bag", "delete-empty"],
 ];
 const DOCK_SENSORS = ["clean_water_tank_status", "dirty_water_tank_status", "dust_bag_status", "detergent_status"];
+const DOCK_SECTIONS = [
+  ["wash", "Wash", ["self_clean"], ["mop_wash_level", "washing_mode", "self_clean_frequency", "self_clean_area",
+    "self_clean_time", "self_clean_by_zone", "hot_washing", "auto_rewashing", "mop_washing_with_detergent"]],
+  ["dry", "Dry", ["manual_drying", "manual_dust_bag_drying"], ["drying_time", "auto_drying", "smart_drying", "silent_drying", "dust_bag_drying"]],
+  ["empty", "Empty", ["start_auto_empty"], ["auto_empty_mode", "auto_empty_frequency", "auto_empty_area", "auto_dust_collecting"]],
+];
 const ROOM_TYPES = [
   ["Living room", "sofa-outline"], ["Bedroom", "bed-king-outline"], ["Study", "bookshelf"],
   ["Kitchen", "stove"], ["Dining room", "silverware-fork-knife"], ["Bathroom", "toilet"],
@@ -624,10 +648,15 @@ const CONSUMABLES = ["main_brush", "side_brush", "filter", "sensor_dirty", "tank
 export function dockEntities(hass, config) {
   const ids = deviceEntities(hass, config);
   const commands = hasAction(hass, "button.press") ? DOCK_ACTIONS.map(([key]) => ["button", key]) : [];
-  return Object.fromEntries([...commands, ...DOCK_SENSORS.map((key) => ["sensor", key])].flatMap(([domain, key]) => {
+  const entities = [...commands, ...DOCK_SENSORS.map((key) => ["sensor", key])].flatMap(([domain, key]) => {
     const id = dreameEntity(hass, config, ids, domain, key);
     return id ? [[key, id]] : [];
-  }));
+  });
+  for (const key of DOCK_SECTIONS.flatMap(([, , , settings]) => settings)) {
+    const id = ["select", "number", "switch"].map(domain => dreameEntity(hass, config, ids, domain, key)).find(Boolean);
+    if (id) entities.push([key, id]);
+  }
+  return Object.fromEntries(entities);
 }
 
 export function maintenanceEntries(hass, config) {
@@ -1200,6 +1229,10 @@ const TEMPLATE = `
   #dock-dialog header { display:flex; align-items:center; justify-content:space-between; padding:0; }
   .dock-status, .dock-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
   .dock-actions { grid-template-columns:repeat(auto-fit,minmax(80px,1fr)); }
+  .dock-tabs { display:flex; gap:6px; }
+  .dock-tabs button { flex:1; }
+  .dock-tabs button[aria-pressed="true"] { background:var(--accent); color:white; }
+  .dock-tab-panel label { display:flex; gap:8px; align-items:center; justify-content:space-between; }
   .dock-actions button { display:grid; place-items:center; gap:5px; border-radius:16px; background:#007d9d; color:white; }
   .history-row { padding:12px 8px; border-bottom:1px solid var(--divider-color,#ddd); }
   .history-row small { display:block; color:var(--secondary-text-color,#555); }
@@ -2292,29 +2325,56 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
   renderDock(dock, available, canReturn) {
     const states = Object.values(dock).map((id) => {
       const state = this.ha.states[id];
-      return [id, state.state, caption(state, id)];
+      const attrs = state.attributes ?? {};
+      return [id, state.state, caption(state, id), attrs.options, attrs.min, attrs.max, attrs.step];
     });
-    this.section("dock-content", [states, dock, available, canReturn], (node) => {
+    const actionsAvailable = ["button.press", "select.select_option", "number.set_value", "switch.turn_on", "switch.turn_off"]
+      .map(action => hasAction(this.ha, action));
+    this.section("dock-content", [states, dock, available, canReturn, actionsAvailable, this.config.entity], (node) => {
       const indicators = element("div", null, { class: "dock-status" });
       for (const key of DOCK_SENSORS) {
         const id = dock[key];
         if (id) indicators.append(element("p", `${caption(this.ha.states[id], id)} · ${this.ha.states[id].state}`));
       }
-      const actions = element("div", null, { class: "dock-actions" });
-      for (const [key, label, name] of DOCK_ACTIONS) {
-        const id = dock[key];
-        if (id) actions.append(this.iconButton(label, name, () => this.run("button.press", {}, id),
-          { disabled: !available || !pressable(this.ha.states[id]) }));
-      }
       node.replaceChildren();
       if (indicators.childElementCount) node.append(indicators);
-      if (actions.childElementCount) node.append(actions);
-      if (DOCK_ACTIONS.slice(0, 3).some(([key]) => dock[key])) {
-        node.append(element("p", this.t("Wash and dry buttons can also stop the active cycle.")));
-      }
+      this.renderDockTabs(node, dock, available);
       if (canReturn) node.append(this.iconButton("Return to dock", "ev-station", () => this.run("vacuum.return_to_base"),
         { disabled: !available }));
     });
+  }
+
+  renderDockTabs(node, dock, available) {
+    const sections = DOCK_SECTIONS.filter(([, , buttons, settings]) => [...buttons, ...settings].some(key => dock[key]));
+    if (!sections.length) return;
+    const tabs = element("div", null, { role: "group", "aria-label": this.t("Dock sections"), class: "dock-tabs" });
+    const panels = sections.map(([key, label, buttons, settings]) => {
+      const panel = element("div", null, { class: "dock-tab-panel" });
+      const tab = this.button(this.t(label), () => select(key));
+      tab.dataset.dockTab = key;
+      tabs.append(tab);
+      const actions = element("div", null, { class: "dock-actions" });
+      for (const [action, actionLabel, iconName] of DOCK_ACTIONS) {
+        const id = buttons.includes(action) && dock[action];
+        if (id) actions.append(this.iconButton(actionLabel, iconName, () => this.run("button.press", {}, id),
+          { disabled: !available || !pressable(this.ha.states[id]) }));
+      }
+      if (actions.childElementCount) panel.append(actions);
+      if ((key === "wash" || key === "dry") && actions.childElementCount) {
+        panel.append(element("p", this.t("Wash and dry buttons can also stop the active cycle.")));
+      }
+      for (const setting of settings) if (dock[setting]) this.renderSettingControl(panel, dock[setting], available);
+      return { key, tab, panel };
+    });
+    const select = key => {
+      this.dockTab = key;
+      for (const entry of panels) {
+        entry.panel.hidden = entry.key !== key;
+        entry.tab.setAttribute("aria-pressed", String(entry.key === key));
+      }
+    };
+    select(panels.find(entry => entry.key === this.dockTab)?.key ?? panels[0].key);
+    node.append(tabs, ...panels.map(({ panel }) => panel));
   }
 
   renderHistory(node, rows) {
@@ -2685,7 +2745,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
     this.calibration = image && liveMap ? map.calibration_points : null;
     this.currentMap = map;
-    this.mapIndex = map.map_index ?? ((attrs.maps?.length ?? 0) <= 1 ? 1 : null);
+    this.mapIndex = activeMapIndex(map, attrs, liveMap, cameraMapId);
     const rotation = mapPresentation(this.config, this.mapIndex).rotation;
     const nativeRotation = [0, 90, 180, 270].includes(map.rotation) ? map.rotation : 0;
     this.mapRotation = rotation == null ? 0 : (rotation - nativeRotation + 360) % 360;
@@ -3139,50 +3199,61 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
 
   renderCleaningSettings(ids, blocked) {
     const detail = this.part("cleaning-detail");
-    const container = this.part("cleaning-settings");
     const controls = CLEANING_CONTROLS.map(([key, label, domain, icons]) => {
       const id = dreameEntity(this.ha, this.config, ids, domain, key);
       return id ? { key, label, domain, icons, id, entity: this.ha.states[id] } : null;
     }).filter(Boolean);
     detail.hidden = blocked || !controls.length;
     if (detail.hidden) {
-      container.replaceChildren();
+      this.section("cleaning-settings", [], node => node.replaceChildren());
       if (this.sidePanelSource?.panel === detail) this.closeSidePanel();
       detail.open = false;
       return;
     }
-    container.replaceChildren();
-    for (const { key, label, domain, icons, id, entity } of controls) {
-      const a = entity.attributes ?? {};
-      const row = element("div", null, { class: "setting-row" });
-      const current = entity.state;
-      row.append(element("span", `${this.t(label)}: ${this.t(current)}`, { class: "setting-label" }));
-      if (domain === "select" && Array.isArray(a.options)) {
-        const group = element("div", null, { class: "setting-group", role: "group", "aria-label": this.t(label) });
-        for (const option of a.options) {
-          const btn = element("button", null, { type: "button", class: "setting-btn",
-            "aria-label": this.t(option), "aria-pressed": String(option === current) });
-          const iconName = icons?.[option];
-          if (iconName) btn.append(icon(iconName));
-          else btn.textContent = this.t(option);
-          btn.addEventListener("click", () => this.run("select.select_option", { option }, id));
-          group.append(btn);
-        }
-        row.append(group);
-      } else if (domain === "switch") {
-        const toggle = element("input", null, { type: "checkbox", class: "setting-toggle", "aria-label": this.t(label), role: "switch" });
-        toggle.checked = current === "on";
-        toggle.addEventListener("change", () =>
-          this.run(toggle.checked ? "switch.turn_on" : "switch.turn_off", {}, id));
-        row.append(toggle);
-      } else if (domain === "number") {
-        const slider = element("input", null, { type: "range", "aria-label": this.t(label), min: String(a.min ?? 1), max: String(a.max ?? 30),
-          step: String(a.step ?? 1), value: current, class: "setting-slider" });
-        slider.addEventListener("change", () => this.run("number.set_value", { value: slider.valueAsNumber }, id));
-        row.append(slider);
+    const signature = controls.map(({ id, entity }) => {
+      const { options, min, max, step } = entity.attributes ?? {};
+      return [id, entity.state, options, min, max, step];
+    });
+    const services = ["select.select_option", "switch.turn_on", "switch.turn_off", "number.set_value"]
+      .map(action => hasAction(this.ha, action));
+    this.section("cleaning-settings", [signature, services], node => {
+      node.replaceChildren(...controls.map(control => this.cleaningSettingRow(control)));
+    });
+  }
+
+  cleaningSettingRow({ label, domain, icons, id, entity }) {
+    const a = entity.attributes ?? {};
+    const row = element("div", null, { class: "setting-row" });
+    const current = entity.state;
+    row.append(element("span", `${this.t(label)}: ${this.t(current)}`, { class: "setting-label" }));
+    if (domain === "select" && Array.isArray(a.options)) {
+      const group = element("div", null, { class: "setting-group", role: "group", "aria-label": this.t(label) });
+      for (const option of a.options) {
+        const btn = element("button", null, { type: "button", class: "setting-btn",
+          "aria-label": this.t(option), "aria-pressed": String(option === current) });
+        const iconName = icons?.[option];
+        if (iconName) btn.append(icon(iconName));
+        else btn.textContent = this.t(option);
+        btn.disabled = !online(entity) || !hasAction(this.ha, "select.select_option");
+        btn.addEventListener("click", () => this.run("select.select_option", { option }, id));
+        group.append(btn);
       }
-      container.append(row);
+      row.append(group);
+    } else if (domain === "switch") {
+      const toggle = element("input", null, { type: "checkbox", class: "setting-toggle", "aria-label": this.t(label), role: "switch" });
+      toggle.checked = current === "on";
+      toggle.disabled = !online(entity) || !hasAction(this.ha, toggle.checked ? "switch.turn_off" : "switch.turn_on");
+      toggle.addEventListener("change", () =>
+        this.run(toggle.checked ? "switch.turn_on" : "switch.turn_off", {}, id));
+      row.append(toggle);
+    } else if (domain === "number") {
+      const slider = element("input", null, { type: "range", "aria-label": this.t(label), min: String(a.min ?? 1), max: String(a.max ?? 30),
+        step: String(a.step ?? 1), value: current, class: "setting-slider" });
+      slider.addEventListener("change", () => this.run("number.set_value", { value: slider.valueAsNumber }, id));
+      slider.disabled = !online(entity) || !hasAction(this.ha, "number.set_value");
+      row.append(slider);
     }
+    return row;
   }
 
   renderSettings(node, ids) {
@@ -3218,7 +3289,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
     }
   }
 
-  renderSettingControl(container, id) {
+  renderSettingControl(container, id, robotAvailable = true) {
     const state = this.ha.states[id];
     const a = state.attributes ?? {};
     const [domain] = id.split(".");
@@ -3255,7 +3326,7 @@ export class DreameOpenCard extends (globalThis.HTMLElement ?? class {}) {
         : { time: control.value.length === 5 ? control.value + ":00" : control.value };
     }
     if (control) {
-      control.disabled = !available || !hasAction(this.ha, action);
+      control.disabled = !robotAvailable || !available || !hasAction(this.ha, action);
       control.addEventListener("change", async () => {
         if (!control.checkValidity() || (domain !== "switch" && !control.value)) {
           this.status("Invalid value.", true);
