@@ -22,7 +22,8 @@
   ];
   const config = { entity: vacuum, map_camera: camera, map_display: "structured",
     mode: params.has("panel") ? "panel" : "default", color_scheme: dark ? "dreame_dark" : "dreame_light" };
-  card.style.maxWidth = params.has("panel") ? "1000px" : "380px";
+  const width = Number(params.get("width"));
+  card.style.maxWidth = `${[320, 500, 1000].includes(width) ? width : params.has("panel") ? 1000 : 380}px`;
   document.body.style.background = dark ? "#222" : "#f1f4f7";
   card.setConfig(config);
 
@@ -71,6 +72,59 @@
 
   window.fixture = { card, calls, update };
   update();
+
+  if (params.has("matrix")) {
+    const output = document.querySelector("output");
+    const root = card.shadowRoot;
+    const el = id => root.getElementById(id);
+    const check = (condition, label) => { if (!condition) throw new Error(label); };
+    const waitFor = async condition => {
+      for (let frame = 0; frame < 180; frame++) {
+        if (condition()) return;
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error("Fixture map did not settle");
+    };
+    const setVacuum = (state, attrs = {}, entities = {}, services = {}) => {
+      const hass = card.ha;
+      card.hass = { ...hass, states: { ...hass.states, ...entities, [vacuum]: {
+        state, attributes: { ...hass.states[vacuum].attributes, ...attrs },
+      } }, services: { ...hass.services, ...services } };
+    };
+    try {
+      await waitFor(() => !el("structured-map").hidden);
+      check(el("map").naturalWidth === 400, "Calibrated image does not match the fixture");
+      check(el("basic").querySelector('[data-action="vacuum.return_to_base"]'), "Simple robot must offer direct return");
+      check(el("floors").querySelectorAll("option").length === 3, "The two fixture floors must be available");
+      const dock = "button.fixture_start_auto_empty";
+      card.setConfig({ ...config, entities: [dock] });
+      setVacuum("docked", {}, { [dock]: { state: "unknown", attributes: {} } }, { button: { press: {} } });
+      check(el("basic").textContent.includes("Dock controls"), "Station robot must have a dock action");
+      card.setConfig(config);
+      setVacuum("unavailable");
+      check([...el("modes").querySelectorAll("button")].every(button => button.disabled), "Offline robot must disable task selection");
+      setVacuum("cleaning", { started: true }, {}, { vacuum: { start: {}, pause: {}, stop: {}, return_to_base: {} } });
+      check(el("basic").querySelector('[data-action="vacuum.pause"]'), "Active task must offer pause");
+      setVacuum("error", { error: "Fixture fault" });
+      check(root.textContent.includes("Fixture fault"), "An active fault must remain visible");
+      update(42, 7, { calibration_points: null });
+      check(!el("figure").hidden && el("structured-map").hidden, "Camera image must remain usable when calibration is absent");
+      update(43);
+      check(!el("figure").hidden && el("structured-map").hidden, "Missing structured frame must keep the camera image");
+      update(42, 7, { entity_picture: null });
+      check(el("figure").hidden, "Absent camera image must not render an empty map");
+      update();
+      await waitFor(() => !el("structured-map").hidden);
+      const room = el("modes").querySelector('[data-mode="room"]');
+      room.focus();
+      check(root.activeElement === room, "Room mode must be keyboard focusable");
+      check(calls.length === 0, "Reading the matrix scenarios must never send a robot action");
+      output.value = `PASS: matrix ${Math.round(card.getBoundingClientRect().width)}px ${dark ? "dark" : "light"}`;
+    } catch (error) {
+      output.value = `FAIL: ${error.message}`;
+      throw error;
+    }
+  }
 
   if (params.has("regressions")) {
     const root = card.shadowRoot;
